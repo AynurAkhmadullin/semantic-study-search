@@ -1,0 +1,42 @@
+# Local Python environments and build products
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tool caches and reports
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+.serena/
+
+# Local project notes
+/PROJECT_NOTES.local.md
+
+# Source materials, generated databases, vectors, and model weights
+/data/raw/*
+!/data/raw/.gitkeep
+/data/processed/*
+!/data/processed/.gitkeep
+/models/
+*.log
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

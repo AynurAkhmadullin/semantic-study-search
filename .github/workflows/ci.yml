@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  HF_HUB_DISABLE_PROGRESS_BARS: "1"
+
+jobs:
+  checks:
+    name: Lint and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+      - name: Install Python and dependencies
+        run: |
+          uv python install
+          uv sync --locked --all-extras
+      - name: Check code style
+        run: |
+          uv run --locked --all-extras ruff check .
+          uv run --locked --all-extras ruff format --check .
+      - name: Test without downloading model weights
+        run: uv run --locked --all-extras pytest -m "not model" --cov=semantic_study_search --cov-report=term-missing
+      - name: Build distributions
+        run: uv build
+
+  model:
+    name: Pretrained E5 integration
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.cache/huggingface
+          key: e5-${{ runner.os }}-614241f622f53c4eeff9890bdc4f31cfecc418b3
+      - name: Install Python and dependencies
+        run: |
+          uv python install
+          uv sync --locked --all-extras
+      - name: Test real model and Russian retrieval
+        run: uv run --locked --all-extras pytest -m model

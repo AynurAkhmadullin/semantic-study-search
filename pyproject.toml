@@ -1,0 +1,79 @@
+[project]
+name = "semantic-study-search"
+version = "0.1.0"
+description = "Semantic search over educational materials with pretrained text embeddings."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[project.scripts]
+semantic-study-search = "semantic_study_search.cli:main"
+semantic-study-index = "semantic_study_search.index_cli:main"
+
+[project.urls]
+Repository = "https://github.com/AynurAkhmadullin/semantic-study-search"
+
+[project.optional-dependencies]
+ml = [
+    "markdown-it-py>=4,<5",
+    "numpy>=2.5.4,<3",
+    "pypdf>=6.21.4,<7",
+    "sentence-transformers>=6.2,<7",
+    "torch>=2.14.1,<3",
+]
+api = [
+    "fastapi>=0.162,<1",
+    "pydantic>=2.14,<3",
+    "uvicorn>=0.54,<1",
+]
+ui = [
+    "httpx>=0.28.1,<1",
+    "pydantic>=2.14,<3",
+    "streamlit>=1.66,<2",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1,<1",
+    "pytest>=9.1,<10",
+    "pytest-cov>=7.1,<8",
+    "ruff>=0.17.3,<0.18",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/semantic_study_search"]
+
+[tool.uv]
+required-version = ">=0.11.29"
+
+# Use CPU wheels on Windows and Linux, including the future cloud backend.
+# macOS uses the standard PyPI distribution.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib --strict-config --strict-markers -m 'not model'"
+markers = [
+    "integration: tests that combine application components",
+    "model: tests that load pretrained model weights",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]

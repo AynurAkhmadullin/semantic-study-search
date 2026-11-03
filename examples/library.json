@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "documents": [
+    {
+      "id": "project-vector-search",
+      "title": "Векторы текста и косинусное сходство",
+      "source_url": "https://github.com/AynurAkhmadullin/semantic-study-search/blob/main/examples/materials/vector-search.md",
+      "path": "materials/vector-search.md"
+    },
+    {
+      "id": "project-retrieval-evaluation",
+      "title": "Проверка качества поиска учебных материалов",
+      "source_url": "https://github.com/AynurAkhmadullin/semantic-study-search/blob/main/examples/materials/retrieval-evaluation.txt",
+      "path": "materials/retrieval-evaluation.txt"
+    }
+  ]
+}
