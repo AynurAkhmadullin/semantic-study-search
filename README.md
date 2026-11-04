@@ -2,6 +2,8 @@
 
 Семантический поиск по загруженным PDF, TXT и Markdown. Находит фрагменты документов по смыслу запроса через веб-интерфейс или API.
 
+В приложении используется модель [intfloat/multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)
+
 ## Требования
 
 - Git и [uv](https://docs.astral.sh/uv/getting-started/installation/) версии `0.11.29` или новее.
