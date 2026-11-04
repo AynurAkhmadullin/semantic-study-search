@@ -2,7 +2,6 @@
 
 import json
 from dataclasses import asdict
-from pathlib import Path
 
 import pytest
 
@@ -12,10 +11,7 @@ from semantic_study_search.evaluation import (
     select_threshold,
     summarize,
 )
-from semantic_study_search.search.relevance import default_min_score
-from semantic_study_search.storage.index import corpus_fingerprint, file_digest
-
-ROOT = Path(__file__).parents[2]
+from semantic_study_search.storage.index import corpus_fingerprint
 
 
 @pytest.fixture
@@ -97,7 +93,7 @@ def benchmark_payload(sample_index):
     """Создаёт корректную разметку для тестового индекса.
 
     Args:
-        sample_index: Индекс трёх учебных документов.
+        sample_index: Индекс трёх документов.
 
     Returns:
         Калибровочный набор с двумя вопросами.
@@ -191,27 +187,3 @@ def test_policy_rejects_another_corpus_and_test_tuning(tmp_path, sample_index):
         path.write_text(json.dumps(changed), encoding="utf-8")
         with pytest.raises(ValueError):
             load_policy(path, sample_index)
-
-
-def test_frozen_splits_are_disjoint_and_policy_matches_calibration():
-    """Контрольные вопросы разделены, а порог связан с калибровочным файлом."""
-    folder = ROOT / "tests/fixtures"
-    calibration_path = folder / "relevance_calibration.json"
-    calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
-    test = json.loads((folder / "relevance_test.json").read_text(encoding="utf-8"))
-    old = json.loads((folder / "evaluation.json").read_text(encoding="utf-8"))
-    sets = [
-        {row["query"].strip().casefold() for row in cases}
-        for cases in (calibration["cases"], test["cases"], old)
-    ]
-    assert len(sets[0]) == len(sets[1]) == 40
-    assert not (sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2])
-    assert "что такое гладиолус?" in sets[0]
-    policy = json.loads(
-        (ROOT / "src/semantic_study_search/resources/relevance_policy.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert policy["calibration_sha256"] == file_digest(calibration_path)
-    assert default_min_score() == policy["min_score"]
-    assert policy["corpus_sha256"] == calibration["corpus_sha256"] == test["corpus_sha256"]

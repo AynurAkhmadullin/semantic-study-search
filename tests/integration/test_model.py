@@ -1,6 +1,5 @@
-"""Проверки настоящей модели E5, токенизатора и поиска по учебным материалам."""
+"""Проверки настоящей модели E5, токенизатора и поиска по материалам."""
 
-import json
 import os
 from pathlib import Path
 
@@ -9,7 +8,6 @@ import pytest
 
 from semantic_study_search.domain import Document
 from semantic_study_search.ingestion.chunking import PASSAGE_PREFIX, chunk_documents, token_count
-from semantic_study_search.ingestion.corpus import load_corpus
 from semantic_study_search.search.encoder import E5Encoder
 from semantic_study_search.search.engine import SearchEngine
 
@@ -31,16 +29,44 @@ def real_encoder():
 
 
 @pytest.fixture(scope="module")
-def real_engine(real_encoder):
-    """Создаёт поиск по встроенному корпусу с настоящей E5.
+def text_documents():
+    """Создаёт изолированные документы только для тестов модели.
+
+    Returns:
+        Два текста с различными темами.
+    """
+    return [
+        Document(
+            "vectors",
+            "Сходство векторов",
+            "https://example.org/vectors",
+            "Косинусное сходство измеряет близость направлений двух векторов. "
+            "Для нормализованных векторов оно равно скалярному произведению. "
+            "Семантический поиск сравнивает вектор вопроса с векторами текстов.",
+        ),
+        Document(
+            "botany",
+            "Ботаника",
+            "https://example.org/botany",
+            "Гладиолус — многолетнее клубнелуковичное растение семейства Ирисовые. "
+            "Его также называют шпажником из-за длинных узких листьев. "
+            "Цветки располагаются вдоль высокого стебля и образуют соцветие колос.",
+        ),
+    ]
+
+
+@pytest.fixture(scope="module")
+def real_engine(real_encoder, text_documents):
+    """Создаёт поиск по изолированным тестовым текстам с настоящей E5.
 
     Args:
         real_encoder: Настоящая модель E5 с токенизатором.
+        text_documents: Документы, созданные только для теста.
 
     Returns:
-        Поисковый движок с векторами встроенных материалов.
+        Поисковый движок с векторами тестовых материалов.
     """
-    chunks = chunk_documents(load_corpus(), real_encoder.tokenizer)
+    chunks = chunk_documents(text_documents, real_encoder.tokenizer)
     assert all(
         token_count(real_encoder.tokenizer, PASSAGE_PREFIX + chunk.text) <= 320 for chunk in chunks
     )
@@ -53,7 +79,7 @@ def test_real_model_shape_and_normalization(real_encoder):
     Args:
         real_encoder: Настоящая модель E5 с токенизатором.
     """
-    vectors = real_encoder.encode_passages(["Текст на русском языке.", "Другой учебный материал."])
+    vectors = real_encoder.encode_passages(["Текст на русском языке.", "Другой материал."])
     assert vectors.shape == (2, 384)
     assert np.isfinite(vectors).all()
     np.testing.assert_allclose(np.linalg.norm(vectors, axis=1), [1, 1], atol=1e-5)
@@ -76,39 +102,23 @@ def test_real_tokenizer_preserves_unicode_and_respects_budget(real_encoder):
     assert all(index in covered for index, char in enumerate(text) if not char.isspace())
 
 
-def test_demo_questions_retrieve_expected_sections(real_engine):
-    """Ожидаемые источники входят в первые пять результатов контрольных вопросов.
-
-    Args:
-        real_engine: Поиск по встроенному корпусу с настоящей E5.
-    """
-    cases = json.loads(
-        (Path(__file__).parents[1] / "fixtures/evaluation.json").read_text(encoding="utf-8")
-    )
-    failures = []
-    for case in cases:
-        results = real_engine.search(case["query"], top_k=5)
-        found = {result.chunk.document_id for result in results}
-        if not found.intersection(case["relevant_document_ids"]):
-            failures.append({"query": case["query"], "found": sorted(found)})
-    assert not failures, f"Expected source missing from top 5 fragments: {failures}"
-
-
-def test_real_model_persistent_index_retrieves_added_material(tmp_path, real_encoder, monkeypatch):
+def test_real_model_persistent_index_retrieves_added_material(
+    tmp_path, real_encoder, text_documents, monkeypatch
+):
     """Поиск находит добавленный материал без пересчёта сохранённых векторов.
 
     Args:
         tmp_path: Временный каталог теста.
         real_encoder: Настоящая модель E5 с токенизатором.
+        text_documents: Документы, созданные только для теста.
         monkeypatch: Фикстура для временной подмены объектов и окружения.
     """
     from unittest.mock import Mock
 
-    from semantic_study_search.ingestion.files import load_manifest
     from semantic_study_search.ingestion.pipeline import prepare_index
     from semantic_study_search.storage.index import IndexConfig, load_index
 
-    documents = load_corpus() + load_manifest(Path(__file__).parents[2] / "examples/library.json")
+    documents = text_documents
     config = IndexConfig()
     index, created = prepare_index(tmp_path, documents, lambda: real_encoder, config=config)
     assert created and len(index.documents) == len(documents)
@@ -120,19 +130,20 @@ def test_real_model_persistent_index_retrieves_added_material(tmp_path, real_enc
     monkeypatch.setattr(real_encoder, "encode_passages", passages)
     engine = SearchEngine.from_index(load_index(tmp_path), real_encoder)
     results = engine.search("Как вычислить косинусное сходство нормализованных векторов?", top_k=3)
-    assert "project-vector-search" in {result.chunk.document_id for result in results}
+    assert results[0].chunk.document_id == "vectors"
     passages.assert_not_called()
 
 
 def test_real_api_keeps_model_and_document_vectors_loaded(
-    tmp_path, real_encoder, real_engine, monkeypatch
+    tmp_path, real_encoder, real_engine, text_documents, monkeypatch
 ):
     """API повторно использует настоящую модель и сохранённые векторы документов.
 
     Args:
         tmp_path: Временный каталог теста.
         real_encoder: Настоящая модель E5 с токенизатором.
-        real_engine: Поиск по встроенному корпусу с настоящей E5.
+        real_engine: Поиск по изолированным текстам с настоящей E5.
+        text_documents: Документы, созданные только для теста.
         monkeypatch: Фикстура для временной подмены объектов и окружения.
     """
     from unittest.mock import Mock
@@ -144,7 +155,7 @@ def test_real_api_keeps_model_and_document_vectors_loaded(
     from semantic_study_search.storage.index import IndexConfig, StoredIndex, save_index
 
     index = StoredIndex(
-        tuple(load_corpus()), real_engine.chunks, real_engine.vectors, IndexConfig()
+        tuple(text_documents), real_engine.chunks, real_engine.vectors, IndexConfig()
     )
     save_index(tmp_path, index)
     model = Mock(return_value=real_encoder)
@@ -157,12 +168,14 @@ def test_real_api_keeps_model_and_document_vectors_loaded(
         assert client.get("/health").json()["documents"] == len(index.documents)
         for _ in range(2):
             response = client.post(
-                "/search", json={"query": "Зачем нужна маска внимания?", "top_k": 5}
+                "/search",
+                json={
+                    "query": "Как вычислить косинусное сходство нормализованных векторов?",
+                    "top_k": 5,
+                },
             )
             assert response.status_code == 200
-            assert "hf-chapter2-5" in {
-                row["chunk"]["document_id"] for row in response.json()["results"]
-            }
+            assert "vectors" in {row["chunk"]["document_id"] for row in response.json()["results"]}
         response = client.post("/search", json={"query": "Как испечь яблочный пирог?"})
         assert response.status_code == 200
         assert response.json()["results"] == []
@@ -171,40 +184,8 @@ def test_real_api_keeps_model_and_document_vectors_loaded(
     assert query.call_count == 3
 
 
-def test_held_out_retrieval_and_rejection_with_real_model(real_encoder):
-    """Фиксированный порог сохраняет поиск по темам и отсеивает посторонние вопросы.
-
-    Args:
-        real_encoder: Настоящая модель E5.
-    """
-    from semantic_study_search.evaluation import load_benchmark, score_cases, summarize
-    from semantic_study_search.ingestion.files import load_manifest
-    from semantic_study_search.search.relevance import default_min_score
-    from semantic_study_search.storage.index import IndexConfig, StoredIndex
-
-    root = Path(__file__).parents[2]
-    # Контрольная разметка относится только к исходным материалам курса и двум примерам.
-    documents = [doc for doc in load_corpus() if doc.id.startswith("hf-")]
-    documents += load_manifest(root / "examples/library.json")
-    engine = SearchEngine(chunk_documents(documents, real_encoder.tokenizer), real_encoder)
-    index = StoredIndex(tuple(documents), engine.chunks, engine.vectors, IndexConfig())
-    benchmark = load_benchmark(root / "tests/fixtures/relevance_test.json", index, "test")
-    threshold = default_min_score()
-    rows = score_cases(engine, benchmark["cases"], repeats=1)
-    metrics = summarize(rows, threshold)
-    assert metrics["hit_at_5"] >= 0.9
-    assert metrics["unanswerable_rejection_rate"] >= 0.6
-    assert metrics["by_category"]["out_of_scope"]["rejected"] == 10
-    for row in rows:
-        actual = engine.search(row["query"], top_k=5, min_score=threshold)
-        assert [result.chunk.id for result in actual] == [
-            result["chunk_id"] for result in row["retrieved"] if result["score"] >= threshold
-        ]
-    assert engine.search("Что такое гладиолус?", min_score=threshold) == []
-
-
 def test_real_model_upload_is_immediately_searchable(tmp_path, real_encoder, monkeypatch):
-    """Загруженный через API текст находится настоящей моделью без перезапуска.
+    """Загрузка и удаление меняют поиск настоящей модели без пересчёта прежних векторов.
 
     Args:
         tmp_path: Временная библиотека.
@@ -228,6 +209,8 @@ def test_real_model_upload_is_immediately_searchable(tmp_path, real_encoder, mon
         "Цветки располагаются вдоль высокого стебля и образуют соцветие колос."
     )
     with TestClient(create_app(settings)) as client:
+        assert client.get("/health").json()["documents"] == 0
+        assert client.post("/search", json={"query": "Что такое гладиолус?"}).status_code == 409
         identifier = post_material(client, text, "botany.txt")
         assert wait_material(client, identifier, timeout=30)["status"] == "ready"
         response = client.post("/search", json={"query": "Что такое гладиолус?"})
@@ -242,4 +225,11 @@ def test_real_model_upload_is_immediately_searchable(tmp_path, real_encoder, mon
         result = client.post("/search", json={"query": "Что такое гладиолус?"}).json()
         assert result["results"][0]["chunk"]["document_id"] == identifier
         assert client.get(f"/materials/{identifier}/file").content == text.encode()
+        assert client.delete(f"/materials/{identifier}").status_code == 204
+        assert client.post("/search", json={"query": "Что такое гладиолус?"}).status_code == 409
+        assert client.get(f"/materials/{identifier}/file").status_code == 404
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/health").json()["documents"] == 0
+        assert client.get("/materials").json() == {"materials": []}
+        assert client.post("/search", json={"query": "Что такое гладиолус?"}).status_code == 409
     passages.assert_not_called()

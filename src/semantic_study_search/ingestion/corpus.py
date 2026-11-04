@@ -1,7 +1,6 @@
-"""Загрузка и проверка корпуса учебных материалов."""
+"""Загрузка и проверка корпуса материалов."""
 
 import json
-from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -9,21 +8,16 @@ from semantic_study_search.domain import Document
 from semantic_study_search.sources import uploaded_source_id
 
 
-def load_corpus(path: Path | None = None) -> list[Document]:
+def load_corpus(path: Path) -> list[Document]:
     """Загружает и проверяет документы из JSON-корпуса.
 
     Args:
-        path: Путь к корпусу; None использует встроенные материалы.
+        path: Путь к предоставленному пользователем корпусу.
 
     Returns:
         Проверенные документы в порядке исходного корпуса.
     """
-    resource = (
-        path
-        if path is not None
-        else files("semantic_study_search").joinpath("resources", "corpus.json")
-    )
-    payload = json.loads(resource.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
     return parse_documents(payload)
 
 

@@ -106,7 +106,7 @@ def test_missing_index_fails_before_model_load(tmp_path, cli_model, capsys):
     """
     _, factory = cli_model
     assert search_main(["вопрос", "--index-dir", str(tmp_path / "missing")]) == 1
-    assert "semantic-study-index" in capsys.readouterr().err
+    assert "загрузите материалы" in capsys.readouterr().err
     factory.assert_not_called()
 
 
@@ -144,14 +144,16 @@ def test_bad_build_settings_fail_before_model_load(tmp_path, cli_model, capsys):
     factory.assert_not_called()
 
 
-def test_example_manifest_can_extend_demo_without_duplicate_ids():
-    """Примеры дополняют встроенный корпус без повторяющихся идентификаторов."""
-    from pathlib import Path
+def test_index_without_materials_rejected(tmp_path, cli_model, capsys):
+    """Подготовка без пользовательских источников не создаёт библиотеку.
 
-    from semantic_study_search.ingestion.corpus import load_corpus
-    from semantic_study_search.ingestion.files import load_manifest
-
-    root = Path(__file__).parents[2]
-    documents = load_corpus() + load_manifest(root / "examples/library.json")
-    assert len(documents) == len(load_corpus()) + 2
-    assert len({doc.id for doc in documents}) == 10
+    Args:
+        tmp_path: Временный каталог.
+        cli_model: Подменённая модель.
+        capsys: Перехват сообщения об ошибке.
+    """
+    _, factory = cli_model
+    assert index_main(["--index-dir", str(tmp_path / "index")]) == 1
+    assert "Укажите свои материалы" in capsys.readouterr().err
+    assert not (tmp_path / "index").exists()
+    factory.assert_not_called()

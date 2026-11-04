@@ -79,7 +79,7 @@ def send_request(
         ) from error
     if response.status_code == 503:
         raise APIClientError("Поисковый сервис временно недоступен или занят. Попробуйте ещё раз.")
-    if response.status_code in {409, 413, 422}:
+    if response.status_code in {404, 409, 413, 422}:
         try:
             detail = response.json().get("detail")
         except (ValueError, AttributeError):
@@ -205,6 +205,20 @@ def list_materials(api_url: str) -> MaterialListResponse:
         return MaterialListResponse.model_validate(request_api(api_url, "GET", "materials"))
     except ValidationError as error:
         raise APIClientError("Не удалось прочитать список материалов.") from error
+
+
+def delete_material(api_url: str, identifier: str) -> None:
+    """Удаляет загруженный материал из общей библиотеки.
+
+    Args:
+        api_url: Адрес API.
+        identifier: Идентификатор удаляемого материала.
+    """
+    if uploaded_source_id(f"/materials/{identifier}/file") != identifier:
+        raise APIClientError("Некорректный идентификатор материала.")
+    response = send_request(api_url, "DELETE", f"materials/{identifier}")
+    if response.status_code != 204:
+        raise APIClientError("Сервис не подтвердил удаление материала. Обновите список загрузок.")
 
 
 def download_material(api_url: str, source: str) -> bytes:

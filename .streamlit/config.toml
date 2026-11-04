@@ -10,4 +10,5 @@ primaryColor = "#315EFB"
 backgroundColor = "#F6F8FC"
 secondaryBackgroundColor = "#FFFFFF"
 textColor = "#1F2937"
+showWidgetBorder = true
 font = "sans serif"

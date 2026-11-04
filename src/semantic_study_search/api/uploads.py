@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -14,6 +15,7 @@ from uuid import uuid4
 from semantic_study_search.api.schemas import MaterialResponse
 from semantic_study_search.api.service import SearchService
 from semantic_study_search.ingestion.files import load_material
+from semantic_study_search.storage.index import prune_index_versions
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 FILE_TYPES = {
@@ -41,12 +43,21 @@ class UploadManager:
             directory: Каталог оригиналов и состояния обработки.
         """
         self.service = service
-        self.directory = directory
+        self.directory = directory = directory.resolve()
         directory.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
         self._records: dict[str, dict] = {}
         self._active: str | None = None
         self._closed = False
+        self._deletions = directory / ".deletions"
+        if self._deletions.resolve() != self._deletions:
+            raise ValueError("Каталог удаления выходит за пределы загрузок.")
+        self._deletions.mkdir(exist_ok=True)
+        for marker in self._deletions.iterdir():
+            if re.fullmatch(r"[0-9a-f]{32}", marker.name):
+                self._material_directory(marker.name)
+                service.remove_material(marker.name)
+                self._finish_delete(marker.name)
         for path in directory.glob("*/metadata.json"):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
@@ -264,6 +275,69 @@ class UploadManager:
         if not path.is_file():
             raise KeyError(identifier)
         return path, record.file_name, FILE_TYPES[extension]
+
+    def _material_directory(self, identifier: str) -> Path:
+        """Проверяет, что удаляемая папка находится внутри каталога загрузок.
+
+        Args:
+            identifier: Идентификатор материала.
+
+        Returns:
+            Проверенный абсолютный путь папки.
+        """
+        if not re.fullmatch(r"[0-9a-f]{32}", identifier):
+            raise ValueError("Некорректный идентификатор материала.")
+        directory = self.directory / identifier
+        if directory.resolve() != directory or directory.parent != self.directory:
+            raise ValueError("Каталог материала выходит за пределы загрузок.")
+        return directory
+
+    def _finish_delete(self, identifier: str) -> None:
+        """Очищает старые индексы, оригинал и запись завершённого удаления.
+
+        Args:
+            identifier: Идентификатор исключённого из поиска материала.
+        """
+        directory = self._material_directory(identifier)
+        if self.service.index_dir is not None:
+            prune_index_versions(self.service.index_dir)
+        if directory.exists():
+            shutil.rmtree(directory)
+        (self._deletions / identifier).unlink(missing_ok=True)
+        self._records.pop(identifier, None)
+
+    def delete(self, identifier: str) -> None:
+        """Удаляет завершённую загрузку, её тексты и векторы из библиотеки.
+
+        Args:
+            identifier: Идентификатор готового или ошибочного материала.
+        """
+        with self._lock:
+            record = self._records[identifier]
+            if self._closed or self._active is not None:
+                raise UploadBusyError(
+                    "Дождитесь завершения обработки материалов и повторите удаление."
+                )
+            self._material_directory(identifier)
+            marker = self._deletions / identifier
+            with marker.open("wb") as stream:
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                self.service.remove_material(identifier)
+            except Exception:
+                marker.unlink(missing_ok=True)
+                raise
+            try:
+                self._finish_delete(identifier)
+            except Exception:
+                record.update(
+                    status="failed",
+                    documents=0,
+                    fragments=0,
+                    error="Удаление не завершено. Повторите удаление материала.",
+                )
+                raise
 
     def close(self) -> None:
         """Дожидается активной обработки перед завершением сервера."""

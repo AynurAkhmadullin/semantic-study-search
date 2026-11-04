@@ -25,6 +25,10 @@ class QueryLimitError(ValueError):
     """Сообщает о превышении числа токенов в вопросе."""
 
 
+class EmptyLibraryError(ValueError):
+    """Сообщает об отсутствии материалов для поиска."""
+
+
 @dataclass(frozen=True)
 class LibrarySnapshot:
     """Объединяет согласованные данные и поиск одной версии библиотеки."""
@@ -50,13 +54,13 @@ class SearchService:
             index: Сохранённая библиотека; None означает отсутствие материалов.
             encoder: Загруженная модель для вопросов и новых документов.
             index_dir: Каталог сохранения новых версий.
-            min_score: Порог сходства; None использует калиброванное значение.
+            min_score: Порог сходства; None использует начальное значение.
         """
         self.encoder = encoder
         self.index_dir = index_dir
         self.min_score = default_min_score() if min_score is None else validate_min_score(min_score)
         self._snapshot = LibrarySnapshot(
-            index, SearchEngine.from_index(index, encoder) if index else None
+            index, SearchEngine.from_index(index, encoder) if index and index.chunks else None
         )
         self._lock = Lock()
 
@@ -65,7 +69,7 @@ class SearchService:
         """Возвращает текущую согласованную версию библиотеки.
 
         Returns:
-            Индекс или None до первой загрузки.
+            Индекс, в том числе пустой после удаления, или None до первой загрузки.
         """
         return self._snapshot.index
 
@@ -111,11 +115,13 @@ class SearchService:
                 "Модель занята подготовкой материала или поиском. Попробуйте позже."
             )
         try:
-            if token_count(self.encoder.tokenizer, QUERY_PREFIX + query) > MAX_TOKENS:
-                raise QueryLimitError("Вопрос слишком длинный для модели. Сократите формулировку.")
             engine = self._snapshot.engine
             if engine is None:
-                return []
+                raise EmptyLibraryError(
+                    "Библиотека пуста. Загрузите материал и дождитесь завершения обработки."
+                )
+            if token_count(self.encoder.tokenizer, QUERY_PREFIX + query) > MAX_TOKENS:
+                raise QueryLimitError("Вопрос слишком длинный для модели. Сократите формулировку.")
             return engine.search(query, top_k=top_k, min_score=None if relaxed else self.min_score)
         finally:
             self._lock.release()
@@ -161,6 +167,41 @@ class SearchService:
             )
             prepared = LibrarySnapshot(candidate, SearchEngine.from_index(candidate, self.encoder))
             on_stage("saving")
+            save_index(self.index_dir, candidate)
+            self._snapshot = prepared
+
+    def remove_material(self, identifier: str) -> None:
+        """Исключает материал из сохранённого индекса и поиска без пересчёта векторов.
+
+        Args:
+            identifier: Идентификатор загруженного файла.
+        """
+        if self.index_dir is None:
+            raise RuntimeError("Каталог индекса не настроен.")
+        with self._lock:
+            previous = self.index
+            if previous is None:
+                return
+            removed = {
+                doc.id
+                for doc in previous.documents
+                if uploaded_source_id(doc.source_url) == identifier
+            }
+            if not removed:
+                return
+            rows = [
+                i for i, chunk in enumerate(previous.chunks) if chunk.document_id not in removed
+            ]
+            candidate = StoredIndex(
+                tuple(doc for doc in previous.documents if doc.id not in removed),
+                tuple(previous.chunks[i] for i in rows),
+                previous.vectors[rows],
+                previous.config,
+            )
+            prepared = LibrarySnapshot(
+                candidate,
+                SearchEngine.from_index(candidate, self.encoder) if candidate.chunks else None,
+            )
             save_index(self.index_dir, candidate)
             self._snapshot = prepared
 

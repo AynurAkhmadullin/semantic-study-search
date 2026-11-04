@@ -18,7 +18,7 @@ def test_unchanged_corpus_reuses_index_without_loading_model(
 
     Args:
         tmp_path: Временный каталог теста.
-        library_documents: Три тестовых учебных документа.
+        library_documents: Три тестовых документа.
         encoder: Кодировщик с фиксированными векторами и счётчиками вызовов.
         index_config: Настройки индекса для тестового кодировщика.
     """
@@ -41,7 +41,7 @@ def test_changed_inputs_create_new_generation(
 
     Args:
         tmp_path: Временный каталог теста.
-        library_documents: Три тестовых учебных документа.
+        library_documents: Три тестовых документа.
         encoder: Кодировщик с фиксированными векторами и счётчиками вызовов.
         index_config: Настройки индекса для тестового кодировщика.
         change: Изменяемый параметр или режим принудительной пересборки.
@@ -50,7 +50,7 @@ def test_changed_inputs_create_new_generation(
     prepare_index(tmp_path, library_documents, factory, config=index_config)
     previous = (tmp_path / "CURRENT").read_bytes()
     if change == "text":
-        library_documents[0] = replace(library_documents[0], text="Обновлённый учебный текст")
+        library_documents[0] = replace(library_documents[0], text="Обновлённый текст")
     elif change == "source":
         library_documents[0] = replace(library_documents[0], source_url="https://example.org/new")
     elif change == "chunking":
@@ -72,7 +72,7 @@ def test_failed_inference_keeps_working_index(tmp_path, library_documents, encod
 
     Args:
         tmp_path: Временный каталог теста.
-        library_documents: Три тестовых учебных документа.
+        library_documents: Три тестовых документа.
         encoder: Кодировщик с фиксированными векторами и счётчиками вызовов.
         index_config: Настройки индекса для тестового кодировщика.
     """
@@ -92,7 +92,7 @@ def test_duplicate_documents_rejected_before_loading_model(
 
     Args:
         tmp_path: Временный каталог теста.
-        library_documents: Три тестовых учебных документа.
+        library_documents: Три тестовых документа.
         index_config: Настройки индекса для тестового кодировщика.
     """
     factory = Mock()
@@ -108,7 +108,7 @@ def test_corrupted_index_requires_explicit_force(
 
     Args:
         tmp_path: Временный каталог теста.
-        library_documents: Три тестовых учебных документа.
+        library_documents: Три тестовых документа.
         encoder: Кодировщик с фиксированными векторами и счётчиками вызовов.
         index_config: Настройки индекса для тестового кодировщика.
     """

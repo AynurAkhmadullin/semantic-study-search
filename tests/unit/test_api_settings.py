@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from semantic_study_search.api.service import load_service
+from semantic_study_search.api.service import EmptyLibraryError, load_service
 from semantic_study_search.api.settings import APISettings
 
 
@@ -63,7 +63,8 @@ def test_missing_index_starts_empty_library(tmp_path, monkeypatch, encoder):
     monkeypatch.setattr("semantic_study_search.api.service.E5Encoder", lambda **kwargs: encoder)
     service = load_service(APISettings(index_dir=tmp_path))
     assert service.counts() == (0, 0)
-    assert service.search("вопрос", 5) == []
+    with pytest.raises(EmptyLibraryError, match="Библиотека пуста"):
+        service.search("вопрос", 5)
     assert encoder.passage_calls == encoder.query_calls == 0
 
 

@@ -72,7 +72,7 @@ def wait_material(client, identifier, timeout=10):
     pytest.fail("Материал не завершил обработку за отведённое время")
 
 
-def post_material(client, text="Учебный текст о семантическом поиске.", filename="lecture.txt"):
+def post_material(client, text="Текст о семантическом поиске.", filename="lecture.txt"):
     """Отправляет текстовый материал и проверяет принятие задачи.
 
     Args:
@@ -96,7 +96,11 @@ def test_upload_search_download_without_restart(upload_client, upload_service):
         upload_service: Пустая библиотека.
     """
     assert upload_client.get("/health").json()["documents"] == 0
-    text = "Семантический поиск сравнивает смысл запроса и учебного текста."
+    response = upload_client.post("/search", json={"query": "поиск по смыслу"})
+    assert response.status_code == 409
+    assert "Загрузите материал" in response.json()["detail"]
+    assert upload_service.encoder.query_calls == 0
+    text = "Семантический поиск сравнивает смысл запроса и текста."
     identifier = post_material(upload_client, text, "лекция.txt")
     state = wait_material(upload_client, identifier)
     assert state["status"] == "ready"
@@ -125,7 +129,7 @@ def test_append_reuses_old_vectors_and_avoids_duplicates(upload_client, upload_s
     assert wait_material(upload_client, first)["status"] == "ready"
     vectors = upload_service.index.vectors.copy()
     assert post_material(upload_client) == first
-    second = post_material(upload_client, "# Новая лекция\n\nДругой учебный текст.", "lecture.md")
+    second = post_material(upload_client, "# Новая лекция\n\nДругой текст.", "lecture.md")
     assert wait_material(upload_client, second)["status"] == "ready"
     assert upload_service.counts() == (2, 2)
     np.testing.assert_array_equal(upload_service.index.vectors[:1], vectors)
@@ -203,6 +207,7 @@ def test_processing_keeps_status_available_and_rejects_parallel_upload(
         response = upload_client.post("/materials", files={"file": ("new.txt", b"another")})
         assert response.status_code == 409
         assert upload_client.post("/search", json={"query": "текст"}).status_code == 503
+        assert upload_client.delete(f"/materials/{identifier}").status_code == 409
     finally:
         release.set()
     assert wait_material(upload_client, identifier)["status"] == "ready"
@@ -231,6 +236,7 @@ def test_upload_endpoints_report_unavailable_service():
         )
         assert client.get("/materials").status_code == 503
         assert client.get("/materials/unknown").status_code == 503
+        assert client.delete("/materials/unknown").status_code == 503
 
 
 @pytest.mark.parametrize(
@@ -295,7 +301,7 @@ def test_restart_restores_downloads_and_committed_status(upload_client, upload_s
         assert recovered.get(identifier).status == "ready"
         assert (
             recovered.original(identifier)[0].read_bytes()
-            == "Учебный текст о семантическом поиске.".encode()
+            == "Текст о семантическом поиске.".encode()
         )
         assert len(restored.search("поиск", 5)) == 1
         assert upload_service.encoder.encode_passages.call_count == 1
@@ -319,7 +325,7 @@ def test_interrupted_job_recovers_as_failed(upload_client, upload_service):
     try:
         assert recovered.get(identifier).status == "failed"
         assert (
-            recovered.submit("lecture.txt", "", "Учебный текст о семантическом поиске.".encode()).id
+            recovered.submit("lecture.txt", "", "Текст о семантическом поиске.".encode()).id
             != identifier
         )
     finally:
@@ -416,3 +422,184 @@ def test_wrong_text_encoding_reports_actionable_error(upload_client):
     assert state["status"] == "failed"
     assert "UTF-8" in state["error"]
     assert upload_client.get("/health").json()["documents"] == 0
+
+
+def test_delete_pdf_preserves_other_material_and_vectors(upload_client, upload_service, tmp_path):
+    """Удаление убирает все страницы PDF и сохраняет другой материал без пересчёта.
+
+    Args:
+        upload_client: API с временной библиотекой.
+        upload_service: Сервис с проверяемым кодировщиком.
+        tmp_path: Каталог тестового PDF.
+    """
+    from tests.unit.test_files import write_pdf
+
+    kept_text = "Оставшийся материал о поиске."
+    kept = post_material(upload_client, kept_text)
+    assert wait_material(upload_client, kept)["status"] == "ready"
+    vectors = upload_service.index.vectors.copy()
+    pdf = tmp_path / "pages.pdf"
+    write_pdf(pdf, ["First page.", "Second page."])
+    response = upload_client.post("/materials", files={"file": (pdf.name, pdf.read_bytes())})
+    identifier = response.json()["id"]
+    assert wait_material(upload_client, identifier)["documents"] == 2
+
+    response = upload_client.delete(f"/materials/{identifier}")
+    assert response.status_code == 204
+    assert response.content == b""
+    assert upload_service.counts() == (1, 1)
+    assert upload_service.material_counts(identifier) == (0, 0)
+    assert upload_service.encoder.encode_passages.call_count == 2
+    np.testing.assert_array_equal(upload_service.index.vectors, vectors)
+    assert upload_client.get(f"/materials/{identifier}").status_code == 404
+    assert upload_client.get(f"/materials/{identifier}/file").status_code == 404
+    assert upload_client.get(f"/materials/{kept}/file").content == kept_text.encode()
+    assert [row["id"] for row in upload_client.get("/materials").json()["materials"]] == [kept]
+    hits = upload_client.post("/search", json={"query": "текст"}).json()["results"]
+    assert hits and all(hit["chunk"]["source_url"] == f"/materials/{kept}/file" for hit in hits)
+    path = upload_service.index_dir
+    assert not (path / "uploads" / identifier).exists()
+    assert len(list((path / "versions").iterdir())) == 1
+    assert load_index(path).documents == upload_service.index.documents
+    assert upload_client.delete(f"/materials/{identifier}").status_code == 404
+    route = upload_client.get("/openapi.json").json()["paths"]["/materials/{material_id}"]["delete"]
+    assert "204" in route["responses"]
+    assert "security" not in route
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_delete_last_upload_survives_restart_and_allows_reupload(
+    upload_client, upload_service, failed
+):
+    """Пустая библиотека сохраняется после удаления, а тот же файл можно загрузить снова.
+
+    Args:
+        upload_client: API с временной библиотекой.
+        upload_service: Поиск и каталог индекса.
+        failed: Удалить ошибочную загрузку вместо готовой.
+    """
+    from semantic_study_search.api.service import EmptyLibraryError
+
+    text = "   " if failed else "Текст о поиске."
+    identifier = post_material(upload_client, text)
+    assert wait_material(upload_client, identifier)["status"] == ("failed" if failed else "ready")
+    assert upload_client.delete(f"/materials/{identifier}").status_code == 204
+    assert upload_client.get("/materials").json() == {"materials": []}
+    assert upload_client.get("/health").json()["documents"] == 0
+    assert upload_client.post("/search", json={"query": "вопрос"}).status_code == 409
+    assert upload_service.encoder.query_calls == 0
+    manager = upload_client.app.state.upload_manager
+    manager.close()
+    path = upload_service.index_dir
+    index = load_index(path) if (path / "CURRENT").exists() else None
+    restored = SearchService(index, upload_service.encoder, index_dir=path)
+    recovered = UploadManager(restored, manager.directory)
+    try:
+        assert recovered.list_materials() == []
+        assert restored.counts() == (0, 0)
+        with pytest.raises(EmptyLibraryError):
+            restored.search("вопрос", 5)
+        repeated = recovered.submit("lecture.txt", "", text.encode())
+        assert repeated.id != identifier
+    finally:
+        recovered.close()
+    assert recovered.get(repeated.id).status == ("failed" if failed else "ready")
+    assert restored.counts() == ((0, 0) if failed else (1, 1))
+
+
+def test_failed_delete_keeps_original_and_search(upload_client, upload_service, monkeypatch):
+    """Сбой записи индекса сохраняет прежний поиск, оригинал и состояние загрузки.
+
+    Args:
+        upload_client: API с временной библиотекой.
+        upload_service: Сервис с сохранённым индексом.
+        monkeypatch: Подмена записи индекса.
+    """
+    identifier = post_material(upload_client)
+    assert wait_material(upload_client, identifier)["status"] == "ready"
+    path = upload_service.index_dir
+    previous = (path / "CURRENT").read_bytes()
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "semantic_study_search.api.service.save_index", Mock(side_effect=OSError("disk full"))
+        )
+        assert upload_client.delete(f"/materials/{identifier}").status_code == 500
+    assert (path / "CURRENT").read_bytes() == previous
+    assert upload_client.get(f"/materials/{identifier}/file").status_code == 200
+    assert upload_client.get(f"/materials/{identifier}").json()["status"] == "ready"
+    assert upload_client.post("/search", json={"query": "текст"}).json()["results"]
+    assert not list((path / "uploads" / ".deletions").iterdir())
+    assert upload_client.delete(f"/materials/{identifier}").status_code == 204
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_interrupted_delete_finishes_on_restart(upload_client, upload_service, committed):
+    """Записанное намерение удаления завершается после перезапуска без восстановления файла.
+
+    Args:
+        upload_client: API с временной библиотекой.
+        upload_service: Поиск и сохранённый индекс.
+        committed: Переключить индекс до имитации прерывания.
+    """
+    identifier = post_material(upload_client)
+    assert wait_material(upload_client, identifier)["status"] == "ready"
+    manager = upload_client.app.state.upload_manager
+    manager.close()
+    marker = manager.directory / ".deletions" / identifier
+    marker.touch()
+    if committed:
+        upload_service.remove_material(identifier)
+    path = upload_service.index_dir
+    restored = SearchService(load_index(path), upload_service.encoder, index_dir=path)
+    recovered = UploadManager(restored, manager.directory)
+    try:
+        assert restored.counts() == (0, 0)
+        assert recovered.list_materials() == []
+        assert not (manager.directory / identifier).exists()
+        assert not marker.exists()
+        assert len(list((path / "versions").iterdir())) == 1
+        assert load_index(path).documents == ()
+    finally:
+        recovered.close()
+
+
+def test_delete_cleanup_can_be_retried(upload_client, upload_service, monkeypatch):
+    """Сбой очистки не возвращает файл в поиск и допускает повторное удаление.
+
+    Args:
+        upload_client: API с временной библиотекой.
+        upload_service: Поиск и каталог индекса.
+        monkeypatch: Подмена удаления файлов с диска.
+    """
+    identifier = post_material(upload_client)
+    assert wait_material(upload_client, identifier)["status"] == "ready"
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "semantic_study_search.api.uploads.shutil.rmtree",
+            Mock(side_effect=PermissionError("locked")),
+        )
+        assert upload_client.delete(f"/materials/{identifier}").status_code == 500
+    assert upload_service.counts() == (0, 0)
+    assert upload_client.get(f"/materials/{identifier}/file").status_code == 404
+    assert upload_client.get(f"/materials/{identifier}").json()["status"] == "failed"
+    marker = upload_service.index_dir / "uploads" / ".deletions" / identifier
+    assert marker.is_file()
+    assert upload_client.delete(f"/materials/{identifier}").status_code == 204
+    assert not marker.exists()
+    assert upload_client.get("/materials").json() == {"materials": []}
+
+
+def test_delete_unknown_upload_does_not_change_library(upload_client, upload_service):
+    """Неизвестный идентификатор не меняет файлы и индекс библиотеки.
+
+    Args:
+        upload_client: API с временной библиотекой.
+        upload_service: Сервис с проверяемым индексом.
+    """
+    identifier = post_material(upload_client)
+    assert wait_material(upload_client, identifier)["status"] == "ready"
+    previous = (upload_service.index_dir / "CURRENT").read_bytes()
+    assert upload_client.delete("/materials/unknown").status_code == 404
+    assert upload_client.delete(f"/materials/{'0' * 32}").status_code == 404
+    assert (upload_service.index_dir / "CURRENT").read_bytes() == previous
+    assert upload_client.get(f"/materials/{identifier}/file").status_code == 200

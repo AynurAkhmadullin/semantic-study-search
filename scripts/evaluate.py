@@ -23,8 +23,6 @@ from semantic_study_search.search.encoder import E5Encoder
 from semantic_study_search.search.engine import SearchEngine
 from semantic_study_search.storage.index import corpus_fingerprint, file_digest, load_index
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 def write_json(path: Path, payload: dict) -> None:
     """Сохраняет JSON-отчёт в UTF-8.
@@ -48,26 +46,26 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split", choices=["calibration", "test"], default="test")
-    parser.add_argument("--cases", type=Path, help="Контрольный набор для выбранной части")
+    parser.add_argument(
+        "--cases", type=Path, required=True, help="Свой контрольный набор для выбранной части"
+    )
     parser.add_argument("--index-dir", type=Path, default=Path("data/processed/library"))
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument(
-        "--policy",
-        type=Path,
-        default=ROOT / "src/semantic_study_search/resources/relevance_policy.json",
-    )
+    parser.add_argument("--policy", type=Path, help="Порог, сохранённый при калибровке")
     parser.add_argument("--policy-output", type=Path, default=Path(".cache/relevance_policy.json"))
     parser.add_argument("--output", type=Path, default=Path(".cache/evaluation.json"))
     args = parser.parse_args(argv)
     try:
         if args.repeats < 1:
             raise ValueError("Число повторений должно быть положительным.")
+        if args.split == "test" and args.policy is None:
+            raise ValueError("Для проверки укажите --policy с результатом своей калибровки.")
         start = perf_counter()
         index = load_index(args.index_dir)
         index_seconds = perf_counter() - start
-        case_path = args.cases or ROOT / f"tests/fixtures/relevance_{args.split}.json"
+        case_path = args.cases
         benchmark = load_benchmark(case_path, index, args.split)
         policy = load_policy(args.policy, index) if args.split == "test" else None
         print("Загрузка E5 и оценка контрольных вопросов…", file=sys.stderr)

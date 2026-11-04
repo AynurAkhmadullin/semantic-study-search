@@ -41,7 +41,7 @@ def test_evaluation_cli_separates_calibration_and_test(
         "cases": [
             {
                 "id": "yes",
-                "query": "учебный вопрос",
+                "query": "вопрос",
                 "category": "answerable",
                 "relevant_document_ids": ["0"],
                 "rationale": "Есть в источнике.",

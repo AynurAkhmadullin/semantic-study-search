@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 from contextlib import closing
 from dataclasses import asdict, dataclass
@@ -95,9 +96,12 @@ class StoredIndex:
     def validate(self) -> None:
         """Проверяет соответствие документов, фрагментов и строк матрицы."""
         self.config.validate()
-        parse_documents({"schema_version": 1, "documents": [asdict(doc) for doc in self.documents]})
+        if self.documents:
+            parse_documents(
+                {"schema_version": 1, "documents": [asdict(doc) for doc in self.documents]}
+            )
         documents = {doc.id: doc for doc in self.documents}
-        if not self.chunks or len({chunk.id for chunk in self.chunks}) != len(self.chunks):
+        if len({chunk.id for chunk in self.chunks}) != len(self.chunks):
             raise ValueError("Индекс должен содержать фрагменты с уникальными идентификаторами.")
         if {chunk.document_id for chunk in self.chunks} != set(documents):
             raise ValueError("Документы и фрагменты индекса не соответствуют друг другу.")
@@ -209,6 +213,33 @@ def save_index(path: Path, index: StoredIndex) -> None:
     os.replace(temporary, path / "CURRENT")
 
 
+def prune_index_versions(path: Path) -> None:
+    """Удаляет прежние версии после публикации актуальной библиотеки.
+
+    Args:
+        path: Каталог индекса, защищённый блокировкой записи API.
+    """
+    path = path.resolve()
+    if not (path / "CURRENT").exists():
+        return
+    generation = json.loads((path / "CURRENT").read_text(encoding="utf-8"))["generation"]
+    if not isinstance(generation, str) or not re.fullmatch(r"[0-9a-f]{32}", generation):
+        raise ValueError("Некорректный идентификатор версии индекса.")
+    versions = path / "versions"
+    if versions.resolve() != versions or not (versions / generation).is_dir():
+        raise ValueError("Некорректный каталог версий индекса.")
+    obsolete = [
+        directory
+        for directory in versions.iterdir()
+        if directory.name != generation and re.fullmatch(r"[0-9a-f]{32}", directory.name)
+    ]
+    for directory in obsolete:
+        if directory.resolve() != directory or directory.parent != versions:
+            raise ValueError("Каталог версии выходит за пределы индекса.")
+    for directory in obsolete:
+        shutil.rmtree(directory)
+
+
 def load_index(path: Path) -> StoredIndex:
     """Загружает согласованный индекс и проверяет целостность его файлов.
 
@@ -219,7 +250,7 @@ def load_index(path: Path) -> StoredIndex:
         Проверенный индекс с настройками подготовки.
     """
     if not (path / "CURRENT").exists():
-        raise FileNotFoundError("Индекс не найден. Выполните semantic-study-index.")
+        raise FileNotFoundError("Библиотека пуста. Сначала загрузите материалы через приложение.")
     try:
         pointer = json.loads((path / "CURRENT").read_text(encoding="utf-8"))
         generation = pointer["generation"]

@@ -13,6 +13,7 @@ from semantic_study_search.storage.index import (
     corpus_fingerprint,
     file_digest,
     load_index,
+    prune_index_versions,
     save_index,
 )
 
@@ -70,13 +71,64 @@ def test_roundtrip_preserves_alignment_and_search_without_document_encoding(
     assert [result.chunk.document_id for result in results] == ["0", "1", "2"]
 
 
+def test_empty_index_roundtrip(tmp_path, sample_index):
+    """Пустой индекс сохраняется после удаления последнего материала.
+
+    Args:
+        tmp_path: Каталог индекса.
+        sample_index: Индекс с корректными настройками.
+    """
+    empty = replace(sample_index, documents=(), chunks=(), vectors=sample_index.vectors[:0])
+    save_index(tmp_path, empty)
+    loaded = load_index(tmp_path)
+    assert loaded.documents == loaded.chunks == ()
+    assert loaded.vectors.shape == (0, sample_index.config.dimension)
+    assert loaded.config == sample_index.config
+    with pytest.raises(ValueError):
+        replace(empty, chunks=sample_index.chunks).validate()
+
+
+def test_prune_preserves_current_and_unrelated_directories(tmp_path, sample_index):
+    """Очистка удаляет прежние версии и не затрагивает активные или посторонние файлы.
+
+    Args:
+        tmp_path: Каталог библиотеки.
+        sample_index: Подготовленный индекс.
+    """
+    save_index(tmp_path, sample_index)
+    old = generation_path(tmp_path)
+    save_index(tmp_path, sample_index)
+    current = generation_path(tmp_path)
+    unrelated = tmp_path / "versions" / "notes"
+    unrelated.mkdir()
+    prune_index_versions(tmp_path)
+    assert not old.exists()
+    assert current.is_dir() and unrelated.is_dir()
+    assert load_index(tmp_path).documents == sample_index.documents
+
+
+def test_prune_rejects_invalid_pointer(tmp_path, sample_index):
+    """Некорректный указатель не позволяет удалить сохранённые версии.
+
+    Args:
+        tmp_path: Каталог библиотеки.
+        sample_index: Подготовленный индекс.
+    """
+    save_index(tmp_path, sample_index)
+    generation = generation_path(tmp_path)
+    (tmp_path / "CURRENT").write_text(json.dumps({"generation": "../other"}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        prune_index_versions(tmp_path)
+    assert generation.is_dir()
+
+
 def test_index_missing_does_not_create_empty_database(tmp_path):
     """Чтение отсутствующего индекса не создаёт пустое хранилище.
 
     Args:
         tmp_path: Временный каталог теста.
     """
-    with pytest.raises(FileNotFoundError, match="semantic-study-index"):
+    with pytest.raises(FileNotFoundError, match="загрузите материалы"):
         load_index(tmp_path / "absent")
     assert not (tmp_path / "absent").exists()
 

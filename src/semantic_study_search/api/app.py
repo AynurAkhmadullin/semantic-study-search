@@ -21,6 +21,7 @@ from semantic_study_search.api.schemas import (
     SearchResponse,
 )
 from semantic_study_search.api.service import (
+    EmptyLibraryError,
     QueryLimitError,
     SearchBusyError,
     SearchService,
@@ -93,7 +94,7 @@ def create_app(
 
     application = FastAPI(
         title="Semantic Study Search",
-        description="Поиск фрагментов в общей библиотеке учебных материалов.",
+        description="Поиск фрагментов в общей библиотеке материалов.",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -143,7 +144,7 @@ def create_app(
     @application.post(
         "/search",
         response_model=SearchResponse,
-        responses={code: {"model": ErrorResponse} for code in (422, 500, 503)},
+        responses={code: {"model": ErrorResponse} for code in (409, 422, 500, 503)},
     )
     def search(payload: SearchRequest) -> SearchResponse:
         """Находит фрагменты по вопросу пользователя.
@@ -170,6 +171,8 @@ def create_app(
                         except KeyError:
                             pass
             return SearchResponse(query=payload.query, results=hits)
+        except EmptyLibraryError as error:
+            raise HTTPException(409, str(error)) from error
         except QueryLimitError as error:
             raise HTTPException(422, str(error)) from error
         except SearchBusyError as error:
@@ -297,6 +300,32 @@ def create_app(
             return get_upload_manager().get(material_id)
         except KeyError as error:
             raise HTTPException(404, "Материал не найден.") from error
+
+    @application.delete(
+        "/materials/{material_id}",
+        status_code=204,
+        responses={code: {"model": ErrorResponse} for code in (404, 409, 500, 503)},
+    )
+    def delete_material(material_id: str) -> Response:
+        """Удаляет загруженный файл и все его поисковые фрагменты.
+
+        Args:
+            material_id: Идентификатор материала общей библиотеки.
+
+        Returns:
+            Пустой ответ после завершения удаления.
+        """
+        manager = get_upload_manager()
+        try:
+            manager.delete(material_id)
+        except KeyError as error:
+            raise HTTPException(404, "Материал не найден.") from error
+        except UploadBusyError as error:
+            raise HTTPException(409, str(error)) from error
+        except Exception as error:
+            logger.exception("Ошибка удаления материала %s", material_id)
+            raise HTTPException(500, "Не удалось завершить удаление. Повторите попытку.") from error
+        return Response(status_code=204)
 
     @application.get("/materials/{material_id}/file")
     def download_material(material_id: str) -> FileResponse:

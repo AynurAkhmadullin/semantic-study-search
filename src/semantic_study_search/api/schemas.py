@@ -82,6 +82,6 @@ class MaterialResponse(BaseModel):
 
 
 class MaterialListResponse(BaseModel):
-    """Содержит состояние ранее загруженных материалов автора."""
+    """Содержит состояние ранее загруженных материалов общей библиотеки."""
 
     materials: list[MaterialResponse]

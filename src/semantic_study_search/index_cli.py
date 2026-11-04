@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Создаёт или обновляет индекс учебной библиотеки.
+    """Создаёт или обновляет индекс библиотеки.
 
     Args:
         argv: Аргументы запуска; None использует командную строку.
@@ -15,14 +15,13 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Код завершения: 0 при успехе, 1 при обработанной ошибке.
     """
-    parser = argparse.ArgumentParser(description="Подготовка индекса учебной библиотеки.")
+    parser = argparse.ArgumentParser(description="Подготовка индекса библиотеки.")
     parser.add_argument(
         "--corpus", type=Path, action="append", default=[], help="Готовый JSON-корпус"
     )
     parser.add_argument(
         "--manifest", type=Path, action="append", default=[], help="Список TXT, MD, PDF"
     )
-    parser.add_argument("--include-demo", action="store_true", help="Добавить встроенные материалы")
     parser.add_argument("--index-dir", type=Path, default=Path("data/processed/library"))
     parser.add_argument("--chunk-tokens", type=int, default=320, help="Лимит токенов фрагмента")
     parser.add_argument("--overlap", type=int, default=48, help="Перекрытие в токенах")
@@ -39,7 +38,9 @@ def main(argv: list[str] | None = None) -> int:
 
         config = IndexConfig(max_tokens=args.chunk_tokens, overlap=args.overlap)
         config.validate()
-        documents = load_corpus() if args.include_demo or not (args.corpus or args.manifest) else []
+        if not (args.corpus or args.manifest):
+            raise ValueError("Укажите свои материалы через --manifest или --corpus.")
+        documents = []
         for path in args.corpus:
             documents.extend(load_corpus(path))
         for path in args.manifest:

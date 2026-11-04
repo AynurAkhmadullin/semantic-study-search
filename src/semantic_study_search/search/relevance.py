@@ -1,8 +1,8 @@
-"""Проверка порога сходства и чтение его калиброванного значения."""
+"""Проверка порога сходства и его начальное значение."""
 
-import json
 import math
-from importlib.resources import files
+
+DEFAULT_MIN_SCORE = 0.8206596076488495
 
 
 def validate_min_score(value: float) -> float:
@@ -22,10 +22,9 @@ def validate_min_score(value: float) -> float:
 
 
 def default_min_score() -> float:
-    """Читает порог, подобранный на калибровочных вопросах проекта.
+    """Возвращает начальный порог, требующий проверки на материалах пользователя.
 
     Returns:
         Порог по умолчанию для API и CLI.
     """
-    resource = files("semantic_study_search").joinpath("resources/relevance_policy.json")
-    return validate_min_score(json.loads(resource.read_text(encoding="utf-8"))["min_score"])
+    return DEFAULT_MIN_SCORE

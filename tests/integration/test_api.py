@@ -42,10 +42,10 @@ def test_lifespan_loads_once_and_reuses_vectors(service, encoder):
     with TestClient(application) as client:
         assert client.get("/health").json() == {"status": "ready", "documents": 3, "fragments": 3}
         for _ in range(2):
-            response = client.post("/search", json={"query": "  учебный вопрос  ", "top_k": 2})
+            response = client.post("/search", json={"query": "  вопрос  ", "top_k": 2})
             assert response.status_code == 200
             data = response.json()
-            assert data["query"] == "учебный вопрос"
+            assert data["query"] == "вопрос"
             assert len(data["results"]) == 2
             assert data["results"][0]["chunk"]["source_url"] == "https://example.org/0"
             assert data["results"][0]["score"] >= data["results"][1]["score"]

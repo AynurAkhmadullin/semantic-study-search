@@ -1,4 +1,4 @@
-"""Веб-интерфейс общей библиотеки учебных материалов."""
+"""Веб-интерфейс общей библиотеки материалов."""
 
 import os
 import re
@@ -24,17 +24,8 @@ def escape_markdown(text: str) -> str:
     return re.sub(r"([\\`*_{}\[\]()#+\-.!|<>$])", r"\\\1", text)
 
 
-def set_example(query: str) -> None:
-    """Подставляет пример вопроса в форму поиска.
-
-    Args:
-        query: Выбранный пример вопроса.
-    """
-    st.session_state["query_input"] = query
-
-
 def show_results(response: SearchResponse, api_url: str) -> None:
-    """Показывает фрагменты и ссылки на исходные учебные материалы.
+    """Показывает фрагменты и ссылки на исходные материалы.
 
     Args:
         response: Результаты поискового API.
@@ -109,6 +100,79 @@ def upload_progress(api_url: str) -> None:
     st.caption("После завершения материал появится в поиске автоматически.")
 
 
+def show_materials(api_url: str) -> None:
+    """Показывает загрузки, скачивание и удаление с подтверждением.
+
+    Args:
+        api_url: Адрес API общей библиотеки.
+    """
+    try:
+        materials = client.list_materials(api_url).materials
+    except client.APIClientError as error:
+        st.error(escape_markdown(str(error)))
+        return
+    if not materials:
+        st.session_state.pop("delete_material_id", None)
+        st.info("Материалы ещё не загружены.")
+        return
+    processing = any(material.status not in {"ready", "failed"} for material in materials)
+    for material in materials:
+        st.write(escape_markdown(material.title))
+        st.caption(escape_markdown(material.file_name))
+        if material.status == "ready":
+            st.caption(f"Готово · фрагментов: {material.fragments}")
+            st.download_button(
+                "Скачать оригинал",
+                data=partial(client.download_material, api_url, f"/materials/{material.id}/file"),
+                file_name=material.file_name,
+                key=f"original-{material.id}",
+                on_click="ignore",
+            )
+        elif material.status == "failed":
+            st.error(escape_markdown(material.error or "Ошибка обработки."))
+        else:
+            st.caption("Материал обрабатывается.")
+            if st.session_state.get("upload_job_id") != material.id:
+                st.session_state["upload_job_id"] = material.id
+                st.rerun()
+        if st.button(
+            "Удалить материал",
+            key=f"delete-{material.id}",
+            disabled=processing,
+            icon=":material/delete:",
+        ):
+            st.session_state["delete_material_id"] = material.id
+        if st.session_state.get("delete_material_id") != material.id:
+            continue
+        st.warning(
+            f"Удалить «{escape_markdown(material.title)}»? "
+            "Файл и его фрагменты будут удалены из общей библиотеки для всех пользователей."
+        )
+        confirm, cancel = st.columns(2)
+        with cancel:
+            if st.button("Отмена", key=f"cancel-delete-{material.id}"):
+                st.session_state.pop("delete_material_id", None)
+                st.rerun()
+        with confirm:
+            if st.button(
+                "Удалить окончательно",
+                key=f"confirm-delete-{material.id}",
+                type="primary",
+                disabled=processing,
+            ):
+                try:
+                    client.delete_material(api_url, material.id)
+                except client.APIClientError as error:
+                    st.error(escape_markdown(str(error)))
+                else:
+                    for key in ("delete_material_id", "search_response", "search_error"):
+                        st.session_state.pop(key, None)
+                    if st.session_state.get("upload_notice", {}).get("id") == material.id:
+                        st.session_state.pop("upload_notice", None)
+                    st.session_state["delete_notice"] = f"Материал «{material.title}» удалён."
+                    st.rerun()
+
+
 def show_upload(api_url: str) -> None:
     """Показывает форму загрузки, ход подготовки и историю материалов.
 
@@ -116,9 +180,11 @@ def show_upload(api_url: str) -> None:
         api_url: Адрес API загрузок.
     """
     with st.expander(
-        "Добавить учебный материал",
+        "Добавить материал",
         expanded=bool(
-            st.session_state.get("upload_job_id") or st.session_state.get("upload_notice")
+            st.session_state.get("upload_job_id")
+            or st.session_state.get("upload_notice")
+            or st.session_state.get("show_materials")
         ),
     ):
         st.caption(
@@ -126,7 +192,7 @@ def show_upload(api_url: str) -> None:
         )
         with st.form("upload_form", clear_on_submit=True):
             file = st.file_uploader(
-                "Учебный материал", type=["pdf", "txt", "md", "markdown"], max_upload_size=20
+                "Материал", type=["pdf", "txt", "md", "markdown"], max_upload_size=20
             )
             title = st.text_input("Название материала (необязательно)", max_chars=200)
             submitted = st.form_submit_button(
@@ -153,37 +219,18 @@ def show_upload(api_url: str) -> None:
                 st.error(escape_markdown(notice["error"] or "Не удалось подготовить материал."))
             for warning in notice["warnings"]:
                 st.warning(escape_markdown(warning))
+        if notice := st.session_state.pop("delete_notice", None):
+            st.success(escape_markdown(notice))
         if st.button("Загрузки"):
-            try:
-                materials = client.list_materials(api_url).materials
-                if not materials:
-                    st.info("Материалы ещё не загружены.")
-                for material in materials:
-                    st.write(escape_markdown(material.title))
-                    if material.status == "ready":
-                        st.caption(f"Готово · фрагментов: {material.fragments}")
-                        st.download_button(
-                            "Скачать оригинал",
-                            data=partial(
-                                client.download_material, api_url, f"/materials/{material.id}/file"
-                            ),
-                            file_name=material.file_name,
-                            key=f"original-{material.id}",
-                            on_click="ignore",
-                        )
-                    elif material.status == "failed":
-                        st.error(escape_markdown(material.error or "Ошибка обработки."))
-                    else:
-                        st.session_state["upload_job_id"] = material.id
-                        st.rerun()
-            except client.APIClientError as error:
-                st.error(escape_markdown(str(error)))
+            st.session_state["show_materials"] = True
+        if st.session_state.get("show_materials"):
+            show_materials(api_url)
 
 
 def main() -> None:
     """Отображает форму поиска и обрабатывает ответы поискового API."""
     st.set_page_config(
-        page_title="Поиск по учебным материалам", page_icon=":material/menu_book:", layout="wide"
+        page_title="Поиск по материалам", page_icon=":material/menu_book:", layout="wide"
     )
     st.markdown(
         "<style>.block-container{max-width:1080px;padding-top:2.5rem;}"
@@ -193,17 +240,22 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     api_url = os.environ.get("SSS_API_URL", "http://127.0.0.1:8000").strip()
+    search_available = False
+    library_empty = False
     with st.sidebar:
-        st.header("Учебная библиотека", anchor=False)
+        st.header("Библиотека", anchor=False)
         try:
             health = client.get_health(api_url)
             if health.status == "ready":
-                st.success("Поиск доступен", icon=":material/check_circle:")
+                library_empty = health.documents == 0
+                search_available = not library_empty
+                if search_available:
+                    st.success("Поиск доступен", icon=":material/check_circle:")
                 left, right = st.columns(2)
                 left.metric("Документы", health.documents)
                 right.metric("Фрагменты", health.fragments)
                 if health.documents == 0:
-                    st.info("Библиотека пуста. Добавьте первый учебный материал.")
+                    st.info("Библиотека пуста. Добавьте первый материал.")
             else:
                 st.warning("Поиск временно недоступен.")
         except client.APIClientError:
@@ -217,40 +269,48 @@ def main() -> None:
         st.caption("Добавленные материалы доступны всем пользователям библиотеки.")
 
     st.caption("SEMANTIC STUDY SEARCH")
-    st.title("Найдите нужное в учебных материалах")
+    st.title("Найдите нужное в материалах")
     st.write(
         "Задайте вопрос — найдём близкие по смыслу фрагменты и покажем, где прочитать подробнее."
     )
+    if library_empty:
+        st.info("Сначала добавьте материал ниже. Поиск станет доступен после его обработки.")
+    if not search_available:
+        st.session_state.pop("search_response", None)
+        st.session_state.pop("search_error", None)
     with st.form("search_form"):
         st.text_input(
             "Ваш вопрос",
             key="query_input",
             max_chars=MAX_QUERY_CHARACTERS,
-            placeholder="Например, зачем нужна маска внимания?",
+            placeholder="Введите вопрос по загруженным материалам",
+            disabled=not search_available,
         )
         relaxed = st.checkbox(
             "Показать и менее точные совпадения",
             help="Расширяет выдачу, если по новой теме ничего не находится. Фрагменты могут не отвечать на вопрос.",
+            disabled=not search_available,
         )
         count, action = st.columns([1, 2], vertical_alignment="bottom")
         with count:
-            top_k = st.selectbox("Количество фрагментов", options=[3, 5, 10, 20], index=1)
+            top_k = st.selectbox(
+                "Количество фрагментов",
+                options=[3, 5, 10, 20],
+                index=1,
+                disabled=not search_available,
+            )
         with action:
             submitted = st.form_submit_button(
-                "Найти", type="primary", icon=":material/search:", width="stretch"
+                "Найти",
+                type="primary",
+                icon=":material/search:",
+                width="stretch",
+                disabled=not search_available,
             )
-    st.caption("Попробуйте один из вопросов")
-    examples = [
-        "Что такое токенизация?",
-        "Зачем нужна маска внимания?",
-        "Как сравнивают векторы текста?",
-    ]
-    for column, query in zip(st.columns(3), examples, strict=True):
-        column.button(query, on_click=set_example, args=(query,), width="stretch")
 
     show_upload(api_url)
 
-    if submitted:
+    if submitted and search_available:
         st.session_state.pop("search_response", None)
         st.session_state.pop("search_error", None)
         query = st.session_state.get("query_input", "").strip()

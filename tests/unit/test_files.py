@@ -80,9 +80,9 @@ def test_clean_text_preserves_paragraphs():
 
 def test_markdown_retains_meaning_and_code_without_markup():
     """Преобразование Markdown сохраняет текст и код, удаляя разметку и HTML."""
-    text = "---\ntitle: hidden\n---\n# Учебник\n\n**Важный** [пример](https://example.org).\n\n![рисунок](x.png)\n\n```python\nx = 1\n```\n\n<script>ignore()</script>"
+    text = "---\ntitle: hidden\n---\n# Документ\n\n**Важный** [пример](https://example.org).\n\n![рисунок](x.png)\n\n```python\nx = 1\n```\n\n<script>ignore()</script>"
     rendered = markdown_text(text)
-    assert "Учебник" in rendered
+    assert "Документ" in rendered
     assert "Важный пример." in rendered
     assert "x = 1" in rendered
     assert not any(

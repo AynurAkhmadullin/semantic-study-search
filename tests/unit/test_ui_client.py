@@ -60,6 +60,48 @@ def test_client_sends_search_body_and_parses_response(transport):
     assert client.search("http://search.local/api", "вопрос", 3).results == []
 
 
+def test_client_deletes_material_without_json_response(transport):
+    """Удаление сохраняет префикс API и принимает пустой ответ HTTP 204.
+
+    Args:
+        transport: Подмена HTTP-транспорта.
+    """
+    identifier = "a" * 32
+    requests = []
+    transport(lambda request: requests.append(request) or httpx.Response(204))
+    client.delete_material("http://search.local/api/v1", identifier)
+    assert len(requests) == 1
+    assert requests[0].method == "DELETE"
+    assert requests[0].url.path == f"/api/v1/materials/{identifier}"
+    assert "authorization" not in requests[0].headers
+
+
+@pytest.mark.parametrize("identifier", ["../other", "unknown", "a" * 32 + "?query=x"])
+def test_client_rejects_invalid_delete_identifier(identifier, monkeypatch):
+    """Некорректный идентификатор отклоняется до отправки запроса.
+
+    Args:
+        identifier: Неподходящий идентификатор.
+        monkeypatch: Подмена сетевого запроса.
+    """
+    request = Mock()
+    monkeypatch.setattr(client, "send_request", request)
+    with pytest.raises(client.APIClientError, match="идентификатор"):
+        client.delete_material("http://search.local", identifier)
+    request.assert_not_called()
+
+
+def test_client_requires_delete_confirmation_from_api(transport):
+    """Успешный HTTP-код без ожидаемого контракта не подтверждает удаление.
+
+    Args:
+        transport: Подмена HTTP-транспорта.
+    """
+    transport(lambda request: httpx.Response(200, json={}))
+    with pytest.raises(client.APIClientError, match="не подтвердил"):
+        client.delete_material("http://search.local", "a" * 32)
+
+
 def test_client_health(transport):
     """Клиент читает состояние и размер библиотеки из ответа API.
 
@@ -78,6 +120,7 @@ def test_client_health(transport):
     "code,body,message",
     [
         (422, {"detail": "Сократите вопрос."}, "Сократите"),
+        (404, {"detail": "Материал не найден."}, "не найден"),
         (503, {"detail": "busy"}, "недоступен или занят"),
         (500, {"detail": "private path"}, "не смог"),
         (302, {}, "не смог"),
@@ -231,7 +274,7 @@ def test_client_uploads_multipart_without_authorization(transport):
         assert request.url == "http://search.local/api/materials"
         assert "authorization" not in request.headers
         assert request.headers["content-type"].startswith("multipart/form-data;")
-        assert "Учебный текст".encode() in request.content
+        assert "Текст".encode() in request.content
         assert "Лекция".encode() in request.content
         return httpx.Response(
             202,
@@ -245,7 +288,7 @@ def test_client_uploads_multipart_without_authorization(transport):
 
     transport(handler)
     result = client.upload_material(
-        "http://search.local/api", "lecture.txt", "Учебный текст".encode(), "Лекция"
+        "http://search.local/api", "lecture.txt", "Текст".encode(), "Лекция"
     )
     assert result.id == identifier
 

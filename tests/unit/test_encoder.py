@@ -31,9 +31,9 @@ def test_e5_prefixes_and_normalization_are_requested(e5):
     Args:
         e5: Кодировщик E5 с подменённым вычислением векторов.
     """
-    e5.encode_passages(["Учебный текст"])
+    e5.encode_passages(["Текст"])
     args, kwargs = e5._model.encode.call_args
-    assert args[0] == ["passage: Учебный текст"]
+    assert args[0] == ["passage: Текст"]
     assert kwargs["normalize_embeddings"] is True
     assert kwargs["prompt"] == ""
     vector = e5.encode_query("  Вопрос  ")

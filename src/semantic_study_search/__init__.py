@@ -1,1 +1,1 @@
-"""Semantic search over educational materials."""
+"""Semantic search over materials."""

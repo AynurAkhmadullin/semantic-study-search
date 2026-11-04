@@ -90,7 +90,7 @@ def encoder():
 
 @pytest.fixture
 def library_documents():
-    """Создаёт три учебных документа с уникальными источниками.
+    """Создаёт три документа с уникальными источниками.
 
     Returns:
         Список тестовых документов.
@@ -98,7 +98,7 @@ def library_documents():
     from semantic_study_search.domain import Document
 
     return [
-        Document(str(i), f"Материал {i}", f"https://example.org/{i}", f"Учебный текст {i}")
+        Document(str(i), f"Материал {i}", f"https://example.org/{i}", f"Текст {i}")
         for i in range(3)
     ]
 
@@ -125,7 +125,7 @@ def sample_index(library_documents, encoder, index_config):
     """Собирает индекс из тестовых документов и готовых векторов.
 
     Args:
-        library_documents: Три тестовых учебных документа.
+        library_documents: Три тестовых документа.
         encoder: Кодировщик с фиксированными векторами и счётчиками вызовов.
         index_config: Настройки индекса для тестового кодировщика.
 

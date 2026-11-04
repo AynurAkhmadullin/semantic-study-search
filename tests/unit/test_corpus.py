@@ -1,37 +1,25 @@
-"""Проверки встроенного корпуса и валидации пользовательских JSON-корпусов."""
+"""Проверки загрузки и валидации пользовательских JSON-корпусов."""
 
 import json
-from importlib.resources import files
 
 import pytest
 
 from semantic_study_search.ingestion.corpus import load_corpus
 
 
-def test_bundled_corpus_has_sources_and_license():
-    """Встроенные материалы содержат источники, текст и сведения о лицензии."""
-    documents = [document for document in load_corpus() if document.id.startswith("hf-")]
-    assert len(documents) == 8
-    assert len({document.id for document in documents}) == 8
-    assert all(document.source_url.startswith("https://huggingface.co/") for document in documents)
-    assert all(len(document.text) > 300 for document in documents)
-    assert all("<Youtube" not in document.text for document in documents)
-    resources = files("semantic_study_search").joinpath("resources")
-    assert "Apache License" in resources.joinpath("LICENSE.huggingface-course.txt").read_text()
-    payload = json.loads(resources.joinpath("corpus.json").read_text(encoding="utf-8"))
-    assert payload["license"] == "Apache-2.0"
-    assert len(payload["source_revision"]) == 40
-    assert all(len(row["source_sha256"]) == 64 for row in payload["documents"])
-
-
 @pytest.fixture
 def row():
-    """Создаёт корректную запись учебного документа.
+    """Создаёт корректную запись документа.
 
     Returns:
         Словарь с обязательными полями документа.
     """
-    return {"id": "one", "title": "Учебник", "source_url": "https://example.org/1", "text": "Текст"}
+    return {
+        "id": "one",
+        "title": "Документ",
+        "source_url": "https://example.org/1",
+        "text": "Текст",
+    }
 
 
 def write_corpus(tmp_path, payload):
@@ -59,7 +47,7 @@ def test_custom_corpus_preserves_unicode_and_source(tmp_path, row):
     path = write_corpus(tmp_path, {"schema_version": 1, "documents": [row]})
     document = load_corpus(path)[0]
     assert document.text == "Текст"
-    assert document.title == "Учебник"
+    assert document.title == "Документ"
     assert document.source_url == row["source_url"]
 
 

@@ -1,4 +1,4 @@
-"""Подготовка и повторное использование индекса учебной библиотеки."""
+"""Подготовка и повторное использование индекса библиотеки."""
 
 from collections.abc import Callable, Sequence
 from dataclasses import asdict

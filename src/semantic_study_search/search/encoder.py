@@ -46,7 +46,7 @@ class Encoder(Protocol):
 
 
 class E5Encoder:
-    """Преобразует учебные тексты и запросы в векторы с помощью E5."""
+    """Преобразует тексты и запросы в векторы с помощью E5."""
 
     model_id = MODEL_ID
     revision = MODEL_REVISION
@@ -105,10 +105,10 @@ class E5Encoder:
         )
 
     def encode_passages(self, texts: Sequence[str]) -> NDArray[np.float32]:
-        """Вычисляет векторы учебных фрагментов с префиксом passage.
+        """Вычисляет векторы фрагментов с префиксом passage.
 
         Args:
-            texts: Тексты учебных фрагментов.
+            texts: Тексты фрагментов.
 
         Returns:
             Матрица нормализованных векторов в порядке фрагментов.

@@ -1,4 +1,4 @@
-"""Поиск по учебным материалам из терминала."""
+"""Поиск по материалам из терминала."""
 
 import argparse
 import json
@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Код завершения: 0 при успехе, 1 при обработанной ошибке.
     """
-    parser = argparse.ArgumentParser(description="Семантический поиск по учебным материалам.")
+    parser = argparse.ArgumentParser(description="Семантический поиск по материалам.")
     parser.add_argument("query", help="Вопрос на русском языке")
     parser.add_argument(
         "--top-k", type=int, default=5, help="Количество фрагментов (по умолчанию 5)"

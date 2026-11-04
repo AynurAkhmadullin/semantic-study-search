@@ -140,18 +140,6 @@ def test_service_unavailable_still_shows_form(ui_backend):
     assert app.text_input(key="query_input").label == "Ваш вопрос"
 
 
-def test_example_only_prefills_question(ui_backend):
-    """Выбор примера заполняет вопрос без выполнения поиска.
-
-    Args:
-        ui_backend: Подменённые вызовы проверки готовности и поиска.
-    """
-    app = AppTest.from_file(APP_PATH).run()
-    next(button for button in app.button if button.label == "Что такое токенизация?").click().run()
-    assert app.text_input[0].value == "Что такое токенизация?"
-    ui_backend[1].assert_not_called()
-
-
 def test_empty_results_message(ui_backend):
     """Пустая выдача сопровождается понятным сообщением.
 
@@ -172,9 +160,10 @@ def test_upload_from_ui_becomes_searchable(ui_backend, monkeypatch):
         ui_backend: Подменённые вызовы поиска.
         monkeypatch: Подмена загрузки файла и фонового статуса.
     """
+    ui_backend[0].return_value = HealthResponse(status="ready", documents=0, fragments=0)
     file = Mock()
     file.name = "lecture.txt"
-    file.getvalue.return_value = "Учебный материал".encode()
+    file.getvalue.return_value = "Материал".encode()
     monkeypatch.setattr("streamlit.file_uploader", Mock(return_value=file))
     material = MaterialResponse(id="a" * 32, file_name=file.name, title="Лекция", status="queued")
     upload = Mock(return_value=material)
@@ -182,6 +171,9 @@ def test_upload_from_ui_becomes_searchable(ui_backend, monkeypatch):
     monkeypatch.setattr(client, "upload_material", upload)
     monkeypatch.setattr(client, "get_material", status)
     app = AppTest.from_file(APP_PATH).run()
+    assert app.text_input(key="query_input").disabled
+    assert next(button for button in app.button if button.label == "Найти").disabled
+    assert any("Сначала добавьте материал" in item.value for item in app.info)
     assert [field.label for field in app.text_input] == [
         "Ваш вопрос",
         "Название материала (необязательно)",
@@ -198,11 +190,13 @@ def test_upload_from_ui_becomes_searchable(ui_backend, monkeypatch):
     status.return_value = material.model_copy(
         update={"status": "ready", "documents": 1, "fragments": 2}
     )
-    ui_backend[0].return_value = HealthResponse(status="ready", documents=11, fragments=27)
+    ui_backend[0].return_value = HealthResponse(status="ready", documents=1, fragments=2)
     app.run()
     assert not app.exception
     assert any("готов к поиску" in message.value for message in app.success)
-    assert app.sidebar.metric[0].value == "11"
+    assert app.sidebar.metric[0].value == "1"
+    assert not app.text_input(key="query_input").disabled
+    assert not next(button for button in app.button if button.label == "Найти").disabled
     submit(app, "Вопрос о лекции")
     ui_backend[1].assert_called_once_with("http://127.0.0.1:8000", "Вопрос о лекции", 5)
 
@@ -275,3 +269,105 @@ def test_upload_history_is_available_immediately(ui_backend, monkeypatch):
     assert not app.exception
     history.assert_called_once_with("http://127.0.0.1:8000")
     assert any("Материалы ещё не загружены" in message.value for message in app.info)
+
+
+@pytest.fixture
+def material_history(monkeypatch):
+    """Подменяет историю и удаление одного загруженного материала.
+
+    Args:
+        monkeypatch: Подмена сетевых вызовов.
+
+    Returns:
+        Материал, ответы истории и функция удаления.
+    """
+    material = MaterialResponse(
+        id="a" * 32,
+        file_name="lecture.txt",
+        title="Лекция",
+        status="ready",
+        documents=1,
+        fragments=2,
+    )
+    history = Mock(return_value=MaterialListResponse(materials=[material]))
+    delete = Mock()
+    monkeypatch.setattr(client, "list_materials", history)
+    monkeypatch.setattr(client, "delete_material", delete)
+    return material, history, delete
+
+
+def test_delete_requires_confirmation_and_clears_results(ui_backend, material_history):
+    """Подтверждённое удаление очищает выдачу и отключает поиск в пустой библиотеке.
+
+    Args:
+        ui_backend: Подмена поиска и готовности.
+        material_history: Материал и подменённые операции с ним.
+    """
+    material, history, delete = material_history
+    app = AppTest.from_file(APP_PATH).run()
+    submit(app, "тестовый вопрос")
+    next(button for button in app.button if button.label == "Загрузки").click().run()
+    app.button(key=f"delete-{material.id}").click().run()
+    delete.assert_not_called()
+    assert any("для всех пользователей" in item.value for item in app.warning)
+    app.button(key=f"cancel-delete-{material.id}").click().run()
+    delete.assert_not_called()
+    assert not any(button.label == "Удалить окончательно" for button in app.button)
+    app.button(key=f"delete-{material.id}").click().run()
+
+    def removed(*args):
+        """Обновляет подменённую библиотеку после удаления.
+
+        Args:
+            *args: Параметры вызова API.
+        """
+        history.return_value = MaterialListResponse(materials=[])
+        ui_backend[0].return_value = HealthResponse(status="ready", documents=0, fragments=0)
+
+    delete.side_effect = removed
+    app.button(key=f"confirm-delete-{material.id}").click().run()
+    assert not app.exception
+    delete.assert_called_once_with("http://127.0.0.1:8000", material.id)
+    assert any("удалён" in item.value for item in app.success)
+    assert app.text_input(key="query_input").disabled
+    assert app.sidebar.metric[0].value == "0"
+    assert "search_response" not in app.session_state
+    assert not any(button.label == "Удалить материал" for button in app.button)
+
+
+def test_delete_error_keeps_material_and_allows_retry(ui_backend, material_history):
+    """Ошибка удаления сохраняет материал и возможность повторить действие.
+
+    Args:
+        ui_backend: Подмена состояния API.
+        material_history: Материал и подменённые операции с ним.
+    """
+    material, _, delete = material_history
+    delete.side_effect = client.APIClientError("Не удалось удалить материал.")
+    app = AppTest.from_file(APP_PATH).run()
+    next(button for button in app.button if button.label == "Загрузки").click().run()
+    app.button(key=f"delete-{material.id}").click().run()
+    app.button(key=f"confirm-delete-{material.id}").click().run()
+    assert not app.exception
+    assert any("Не удалось удалить" in item.value for item in app.error)
+    assert not app.button(key=f"confirm-delete-{material.id}").disabled
+    assert not any("удалён" in item.value for item in app.success)
+
+
+def test_delete_disabled_during_processing(ui_backend, material_history, monkeypatch):
+    """Обработка файла блокирует удаление и не вызывает бесконечное обновление истории.
+
+    Args:
+        ui_backend: Подмена состояния API.
+        material_history: Материал и подменённые операции с ним.
+        monkeypatch: Подмена состояния фоновой обработки.
+    """
+    material, history, delete = material_history
+    processing = material.model_copy(update={"status": "embedding"})
+    history.return_value = MaterialListResponse(materials=[processing])
+    monkeypatch.setattr(client, "get_material", Mock(return_value=processing))
+    app = AppTest.from_file(APP_PATH).run()
+    next(button for button in app.button if button.label == "Загрузки").click().run()
+    assert not app.exception
+    assert app.button(key=f"delete-{material.id}").disabled
+    delete.assert_not_called()

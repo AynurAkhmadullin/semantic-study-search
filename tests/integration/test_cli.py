@@ -29,7 +29,7 @@ def corpus_file(tmp_path):
                     {
                         "id": str(i),
                         "title": f"Материал {i}",
-                        "text": f"Учебный текст номер {i}",
+                        "text": f"Текст номер {i}",
                         "source_url": f"https://example.org/{i}",
                     }
                     for i in range(3)
@@ -76,7 +76,7 @@ def test_cli_json_connects_loading_chunking_and_search(corpus_file, fake_model, 
     assert len(results) == 2
     assert results[0]["chunk"]["document_id"] == "0"
     assert results[0]["chunk"]["source_url"] == "https://example.org/0"
-    assert results[0]["chunk"]["text"] == "Учебный текст номер 0"
+    assert results[0]["chunk"]["text"] == "Текст номер 0"
     assert results[1]["score"] == pytest.approx(1 / np.sqrt(2))
     assert "Индексация" in output.err
 
