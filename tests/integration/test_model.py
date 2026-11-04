@@ -111,7 +111,7 @@ def test_real_model_persistent_index_retrieves_added_material(tmp_path, real_enc
     documents = load_corpus() + load_manifest(Path(__file__).parents[2] / "examples/library.json")
     config = IndexConfig()
     index, created = prepare_index(tmp_path, documents, lambda: real_encoder, config=config)
-    assert created and len(index.documents) == 10
+    assert created and len(index.documents) == len(documents)
     factory = Mock(side_effect=AssertionError("Model must not reload for an unchanged library"))
     _, created = prepare_index(tmp_path, documents, factory, config=config)
     assert not created
@@ -154,7 +154,7 @@ def test_real_api_keeps_model_and_document_vectors_loaded(
     monkeypatch.setattr(real_encoder, "encode_passages", passages)
     monkeypatch.setattr(real_encoder, "encode_query", query)
     with TestClient(create_app(APISettings(index_dir=tmp_path, offline=True))) as client:
-        assert client.get("/health").json()["documents"] == 8
+        assert client.get("/health").json()["documents"] == len(index.documents)
         for _ in range(2):
             response = client.post(
                 "/search", json={"query": "Зачем нужна маска внимания?", "top_k": 5}
@@ -163,7 +163,7 @@ def test_real_api_keeps_model_and_document_vectors_loaded(
             assert "hf-chapter2-5" in {
                 row["chunk"]["document_id"] for row in response.json()["results"]
             }
-        response = client.post("/search", json={"query": "Что такое гладиолус?"})
+        response = client.post("/search", json={"query": "Как испечь яблочный пирог?"})
         assert response.status_code == 200
         assert response.json()["results"] == []
     model.assert_called_once()
@@ -183,7 +183,9 @@ def test_held_out_retrieval_and_rejection_with_real_model(real_encoder):
     from semantic_study_search.storage.index import IndexConfig, StoredIndex
 
     root = Path(__file__).parents[2]
-    documents = load_corpus() + load_manifest(root / "examples/library.json")
+    # Контрольная разметка относится только к исходным материалам курса и двум примерам.
+    documents = [doc for doc in load_corpus() if doc.id.startswith("hf-")]
+    documents += load_manifest(root / "examples/library.json")
     engine = SearchEngine(chunk_documents(documents, real_encoder.tokenizer), real_encoder)
     index = StoredIndex(tuple(documents), engine.chunks, engine.vectors, IndexConfig())
     benchmark = load_benchmark(root / "tests/fixtures/relevance_test.json", index, "test")
@@ -199,3 +201,45 @@ def test_held_out_retrieval_and_rejection_with_real_model(real_encoder):
             result["chunk_id"] for result in row["retrieved"] if result["score"] >= threshold
         ]
     assert engine.search("Что такое гладиолус?", min_score=threshold) == []
+
+
+def test_real_model_upload_is_immediately_searchable(tmp_path, real_encoder, monkeypatch):
+    """Загруженный через API текст находится настоящей моделью без перезапуска.
+
+    Args:
+        tmp_path: Временная библиотека.
+        real_encoder: Настоящая модель E5.
+        monkeypatch: Подмена повторной загрузки весов.
+    """
+    from unittest.mock import Mock
+
+    from fastapi.testclient import TestClient
+    from tests.integration.test_uploads import post_material, wait_material
+
+    from semantic_study_search.api.app import create_app
+    from semantic_study_search.api.settings import APISettings
+
+    model = Mock(return_value=real_encoder)
+    monkeypatch.setattr("semantic_study_search.api.service.E5Encoder", model)
+    settings = APISettings(index_dir=tmp_path, offline=True)
+    text = (
+        "Гладиолус — многолетнее клубнелуковичное растение семейства Ирисовые. "
+        "Его также называют шпажником из-за длинных узких листьев. "
+        "Цветки располагаются вдоль высокого стебля и образуют соцветие колос."
+    )
+    with TestClient(create_app(settings)) as client:
+        identifier = post_material(client, text, "botany.txt")
+        assert wait_material(client, identifier, timeout=30)["status"] == "ready"
+        response = client.post("/search", json={"query": "Что такое гладиолус?"})
+        assert response.status_code == 200
+        assert response.json()["results"][0]["chunk"]["text"] == text
+        assert client.get(f"/materials/{identifier}/file").content == text.encode()
+        model.assert_called_once()
+    # Повторный запуск читает сохранённые векторы без кодирования документа.
+    passages = Mock(side_effect=AssertionError("Saved vectors must be reused"))
+    monkeypatch.setattr(real_encoder, "encode_passages", passages)
+    with TestClient(create_app(settings)) as client:
+        result = client.post("/search", json={"query": "Что такое гладиолус?"}).json()
+        assert result["results"][0]["chunk"]["document_id"] == identifier
+        assert client.get(f"/materials/{identifier}/file").content == text.encode()
+    passages.assert_not_called()

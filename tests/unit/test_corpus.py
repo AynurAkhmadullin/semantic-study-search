@@ -10,7 +10,7 @@ from semantic_study_search.ingestion.corpus import load_corpus
 
 def test_bundled_corpus_has_sources_and_license():
     """Встроенные материалы содержат источники, текст и сведения о лицензии."""
-    documents = load_corpus()
+    documents = [document for document in load_corpus() if document.id.startswith("hf-")]
     assert len(documents) == 8
     assert len({document.id for document in documents}) == 8
     assert all(document.source_url.startswith("https://huggingface.co/") for document in documents)

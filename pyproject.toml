@@ -9,6 +9,7 @@ dependencies = []
 [project.scripts]
 semantic-study-search = "semantic_study_search.cli:main"
 semantic-study-index = "semantic_study_search.index_cli:main"
+semantic-study-start = "semantic_study_search.launcher:main"
 
 [project.urls]
 Repository = "https://github.com/AynurAkhmadullin/semantic-study-search"
@@ -23,7 +24,9 @@ ml = [
 ]
 api = [
     "fastapi>=0.162,<1",
+    "filelock>=4.2.4,<5",
     "pydantic>=2.14,<3",
+    "python-multipart>=0.0.20,<1",
     "uvicorn>=0.54,<1",
 ]
 ui = [

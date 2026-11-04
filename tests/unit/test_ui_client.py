@@ -209,3 +209,84 @@ def test_invalid_service_address(url):
     """
     with pytest.raises(client.APIClientError, match="адрес"):
         client.get_health(url)
+
+
+def test_client_uploads_multipart_without_authorization(transport):
+    """Клиент передаёт файл и название без заголовка авторизации.
+
+    Args:
+        transport: Подменённый HTTP-транспорт.
+    """
+    identifier = "a" * 32
+
+    def handler(request):
+        """Проверяет содержимое загрузки и возвращает принятую задачу.
+
+        Args:
+            request: HTTP-запрос загрузки.
+
+        Returns:
+            Ответ о принятом материале.
+        """
+        assert request.url == "http://search.local/api/materials"
+        assert "authorization" not in request.headers
+        assert request.headers["content-type"].startswith("multipart/form-data;")
+        assert "Учебный текст".encode() in request.content
+        assert "Лекция".encode() in request.content
+        return httpx.Response(
+            202,
+            json={
+                "id": identifier,
+                "file_name": "lecture.txt",
+                "title": "Лекция",
+                "status": "queued",
+            },
+        )
+
+    transport(handler)
+    result = client.upload_material(
+        "http://search.local/api", "lecture.txt", "Учебный текст".encode(), "Лекция"
+    )
+    assert result.id == identifier
+
+
+def test_client_download_keeps_api_prefix_and_omits_page_fragment(transport):
+    """Внутренний источник скачивается через API с сохранением его базового пути.
+
+    Args:
+        transport: Подменённый HTTP-транспорт.
+    """
+    source = "/materials/" + "a" * 32 + "/file"
+
+    def handler(request):
+        """Проверяет адрес скачивания оригинала.
+
+        Args:
+            request: HTTP-запрос оригинального файла.
+
+        Returns:
+            Содержимое исходного файла.
+        """
+        assert str(request.url) == "http://search.local/api" + source
+        assert "authorization" not in request.headers
+        return httpx.Response(200, content=b"original")
+
+    transport(handler)
+    assert client.download_material("http://search.local/api", source + "#page=2") == b"original"
+
+
+@pytest.mark.parametrize(
+    "source", ["/materials/../file", "//evil.test/file", "https://evil.test/file"]
+)
+def test_client_rejects_invalid_download_source(source, monkeypatch):
+    """Небезопасная ссылка не вызывает сетевого запроса скачивания.
+
+    Args:
+        source: Некорректная ссылка на оригинал.
+        monkeypatch: Подмена сетевого вызова.
+    """
+    send = Mock()
+    monkeypatch.setattr(client, "send_request", send)
+    with pytest.raises(client.APIClientError):
+        client.download_material("http://search.local", source)
+    send.assert_not_called()

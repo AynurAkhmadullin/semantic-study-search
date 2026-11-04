@@ -153,5 +153,5 @@ def test_example_manifest_can_extend_demo_without_duplicate_ids():
 
     root = Path(__file__).parents[2]
     documents = load_corpus() + load_manifest(root / "examples/library.json")
-    assert len(documents) == 10
+    assert len(documents) == len(load_corpus()) + 2
     assert len({doc.id for doc in documents}) == 10

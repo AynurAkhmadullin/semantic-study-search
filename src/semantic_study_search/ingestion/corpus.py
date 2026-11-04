@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from semantic_study_search.domain import Document
+from semantic_study_search.sources import uploaded_source_id
 
 
 def load_corpus(path: Path | None = None) -> list[Document]:
@@ -52,7 +53,9 @@ def parse_documents(payload: object) -> list[Document]:
         if document.id in seen:
             raise ValueError(f"Повторяющийся id документа: {document.id}")
         url = urlparse(document.source_url)
-        if url.scheme not in {"http", "https"} or not url.netloc:
+        if uploaded_source_id(document.source_url) is None and (
+            url.scheme not in {"http", "https"} or not url.netloc
+        ):
             raise ValueError(f"Некорректная ссылка на источник: {document.id}")
         seen.add(document.id)
         documents.append(document)

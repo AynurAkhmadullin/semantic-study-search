@@ -6,7 +6,12 @@ from unittest.mock import Mock
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from semantic_study_search.api.schemas import HealthResponse, SearchResponse
+from semantic_study_search.api.schemas import (
+    HealthResponse,
+    MaterialListResponse,
+    MaterialResponse,
+    SearchResponse,
+)
 from semantic_study_search.ui import client
 
 pytestmark = pytest.mark.integration
@@ -132,7 +137,7 @@ def test_service_unavailable_still_shows_form(ui_backend):
     app = AppTest.from_file(APP_PATH).run()
     assert not app.exception
     assert "Нет связи" in app.warning[0].value
-    assert len(app.text_input) == 1
+    assert app.text_input(key="query_input").label == "Ваш вопрос"
 
 
 def test_example_only_prefills_question(ui_backend):
@@ -158,3 +163,115 @@ def test_empty_results_message(ui_backend):
     submit(app, "вопрос")
     assert not app.exception
     assert "не найдены" in app.info[0].value
+
+
+def test_upload_from_ui_becomes_searchable(ui_backend, monkeypatch):
+    """Форма отправляет файл и обновляет библиотеку после завершения обработки.
+
+    Args:
+        ui_backend: Подменённые вызовы поиска.
+        monkeypatch: Подмена загрузки файла и фонового статуса.
+    """
+    file = Mock()
+    file.name = "lecture.txt"
+    file.getvalue.return_value = "Учебный материал".encode()
+    monkeypatch.setattr("streamlit.file_uploader", Mock(return_value=file))
+    material = MaterialResponse(id="a" * 32, file_name=file.name, title="Лекция", status="queued")
+    upload = Mock(return_value=material)
+    status = Mock(return_value=material.model_copy(update={"status": "embedding"}))
+    monkeypatch.setattr(client, "upload_material", upload)
+    monkeypatch.setattr(client, "get_material", status)
+    app = AppTest.from_file(APP_PATH).run()
+    assert [field.label for field in app.text_input] == [
+        "Ваш вопрос",
+        "Название материала (необязательно)",
+    ]
+    next(field for field in app.text_input if field.label.startswith("Название")).set_value(
+        "Лекция"
+    )
+    next(button for button in app.button if button.label == "Загрузить материал").click().run()
+    assert not app.exception
+    upload.assert_called_once_with(
+        "http://127.0.0.1:8000", "lecture.txt", file.getvalue(), "Лекция"
+    )
+    assert app.session_state["upload_job_id"] == material.id
+    status.return_value = material.model_copy(
+        update={"status": "ready", "documents": 1, "fragments": 2}
+    )
+    ui_backend[0].return_value = HealthResponse(status="ready", documents=11, fragments=27)
+    app.run()
+    assert not app.exception
+    assert any("готов к поиску" in message.value for message in app.success)
+    assert app.sidebar.metric[0].value == "11"
+    submit(app, "Вопрос о лекции")
+    ui_backend[1].assert_called_once_with("http://127.0.0.1:8000", "Вопрос о лекции", 5)
+
+
+def test_upload_failure_is_shown(ui_backend, monkeypatch):
+    """Ошибка фоновой обработки отображается и разрешает новую загрузку.
+
+    Args:
+        ui_backend: Подменённые вызовы поиска.
+        monkeypatch: Подмена состояния материала.
+    """
+    material = MaterialResponse(
+        id="b" * 32,
+        file_name="scan.pdf",
+        title="Скан",
+        status="failed",
+        error="Нет текстового слоя.",
+    )
+    monkeypatch.setattr(client, "get_material", Mock(return_value=material))
+    app = AppTest.from_file(APP_PATH)
+    app.session_state["upload_job_id"] = material.id
+    app.run()
+    assert not app.exception
+    assert any("Нет текстового слоя" in message.value for message in app.error)
+    assert not next(
+        button for button in app.button if button.label == "Загрузить материал"
+    ).disabled
+
+
+def test_upload_requires_file_before_network(ui_backend, monkeypatch):
+    """Форма без файла сообщает об ошибке без запроса загрузки.
+
+    Args:
+        ui_backend: Подменённые вызовы поиска.
+        monkeypatch: Подмена HTTP-загрузки.
+    """
+    upload = Mock()
+    monkeypatch.setattr(client, "upload_material", upload)
+    app = AppTest.from_file(APP_PATH).run()
+    next(button for button in app.button if button.label == "Загрузить материал").click().run()
+    assert any("Выберите файл" in message.value for message in app.error)
+    upload.assert_not_called()
+
+
+def test_relaxed_checkbox_is_sent_to_api(ui_backend):
+    """Переключатель расширенной выдачи передаётся в API.
+
+    Args:
+        ui_backend: Подменённые вызовы поиска.
+    """
+    app = AppTest.from_file(APP_PATH).run()
+    app.checkbox[0].check()
+    submit(app, "новая тема")
+    ui_backend[1].assert_called_once_with("http://127.0.0.1:8000", "новая тема", 5, relaxed=True)
+
+
+def test_upload_history_is_available_immediately(ui_backend, monkeypatch):
+    """История загрузок открывается без ввода дополнительных данных.
+
+    Args:
+        ui_backend: Подменённые вызовы поиска.
+        monkeypatch: Подмена загрузки истории.
+    """
+    history = Mock(return_value=MaterialListResponse(materials=[]))
+    monkeypatch.setattr(client, "list_materials", history)
+    app = AppTest.from_file(APP_PATH).run()
+    button = next(button for button in app.button if button.label == "Загрузки")
+    assert not button.disabled
+    button.click().run()
+    assert not app.exception
+    history.assert_called_once_with("http://127.0.0.1:8000")
+    assert any("Материалы ещё не загружены" in message.value for message in app.info)

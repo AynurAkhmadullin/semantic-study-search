@@ -55,12 +55,16 @@ def markdown_text(text: str) -> str:
     return clean_text("\n\n".join(parts))
 
 
-def read_pdf(path: Path, metadata: dict[str, str]) -> list[dict[str, str]]:
+def read_pdf(
+    path: Path, metadata: dict[str, str], *, max_pages: int = 300, max_characters: int = 1_000_000
+) -> list[dict[str, str]]:
     """Извлекает текстовые страницы PDF с отдельными ссылками на страницы.
 
     Args:
         path: Путь к PDF-файлу.
         metadata: Идентификатор, название и ссылка на документ.
+        max_pages: Максимальное число страниц.
+        max_characters: Максимальный объём извлечённого текста.
 
     Returns:
         Записи страниц с извлечённым текстом.
@@ -71,8 +75,14 @@ def read_pdf(path: Path, metadata: dict[str, str]) -> list[dict[str, str]]:
             reader = PdfReader(stream)
             if reader.is_encrypted:
                 raise ValueError(f"PDF защищён паролем: {path.name}")
+            if len(reader.pages) > max_pages:
+                raise ValueError(f"В PDF больше {max_pages} страниц.")
+            characters = 0
             for number, page in enumerate(reader.pages, 1):
                 text = clean_text(page.extract_text() or "")
+                characters += len(text)
+                if characters > max_characters:
+                    raise ValueError("Материал содержит слишком много текста.")
                 if not text:
                     warnings.warn(
                         f"{path.name}: страница {number} не содержит текста; OCR не выполняется.",
@@ -93,6 +103,32 @@ def read_pdf(path: Path, metadata: dict[str, str]) -> list[dict[str, str]]:
     if not rows:
         raise ValueError(f"В PDF {path.name} нет текстового слоя; требуется OCR.")
     return rows
+
+
+def load_material(path: Path, metadata: dict[str, str]) -> list[Document]:
+    """Извлекает учебный текст из одного локального файла.
+
+    Args:
+        path: Файл TXT, Markdown или текстовый PDF.
+        metadata: Идентификатор, название и ссылка на оригинал.
+
+    Returns:
+        Документ или отдельные текстовые страницы PDF.
+    """
+    extension = path.suffix.lower()
+    if extension == ".pdf":
+        rows = read_pdf(path, metadata)
+    elif extension in {".txt", ".md", ".markdown"}:
+        text = path.read_text(encoding="utf-8-sig")
+        if len(text) > 1_000_000:
+            raise ValueError("Материал содержит слишком много текста.")
+        text = clean_text(text) if extension == ".txt" else markdown_text(text)
+        if not text:
+            raise ValueError(f"Файл не содержит текста: {path.name}")
+        rows = [metadata | {"text": text}]
+    else:
+        raise ValueError(f"Формат {extension} не поддерживается: {path.name}")
+    return parse_documents({"schema_version": 1, "documents": rows})
 
 
 def load_manifest(path: Path) -> list[Document]:
@@ -124,15 +160,5 @@ def load_manifest(path: Path) -> list[Document]:
             raise ValueError(f"Повторяющийся id источника: {metadata['id']}")
         seen.add(metadata["id"])
         source = path.parent / row["path"]
-        extension = source.suffix.lower()
-        if extension == ".pdf":
-            imported.extend(read_pdf(source, metadata))
-        elif extension in {".txt", ".md", ".markdown"}:
-            text = source.read_text(encoding="utf-8-sig")
-            text = clean_text(text) if extension == ".txt" else markdown_text(text)
-            if not text:
-                raise ValueError(f"Файл не содержит текста: {source.name}")
-            imported.append(metadata | {"text": text})
-        else:
-            raise ValueError(f"Формат {extension} не поддерживается: {source.name}")
+        imported.extend(doc.__dict__ for doc in load_material(source, metadata))
     return parse_documents({"schema_version": 1, "documents": imported})

@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from semantic_study_search.api.app import create_app
 from semantic_study_search.api.service import SearchService
 from semantic_study_search.api.settings import APISettings
-from semantic_study_search.search.engine import SearchEngine
 
 pytestmark = pytest.mark.integration
 
@@ -27,9 +26,7 @@ def service(sample_index, encoder):
         Готовый поисковый сервис.
     """
     encoder.passage_calls = 0
-    return SearchService(
-        SearchEngine.from_index(sample_index, encoder), len(sample_index.documents), min_score=-1
-    )
+    return SearchService(sample_index, encoder, min_score=-1)
 
 
 def test_lifespan_loads_once_and_reuses_vectors(service, encoder):

@@ -15,6 +15,7 @@ class APISettings:
     model_cache: Path | None = None
     offline: bool = False
     min_score: float = field(default_factory=default_min_score)
+    upload_dir: Path | None = None
 
     def __post_init__(self) -> None:
         """Проверяет порог до загрузки модели."""
@@ -39,6 +40,11 @@ class APISettings:
             min_score = default_min_score() if score is None else validate_min_score(float(score))
         except ValueError as error:
             raise ValueError("SSS_MIN_SCORE должен быть конечным числом от -1 до 1.") from error
+        upload_dir = os.environ.get("SSS_UPLOAD_DIR", "").strip()
         return cls(
-            Path(directory), Path(cache) if cache else None, offline in {"1", "true"}, min_score
+            Path(directory),
+            Path(cache) if cache else None,
+            offline in {"1", "true"},
+            min_score,
+            Path(upload_dir) if upload_dir else None,
         )
