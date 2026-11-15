@@ -23,6 +23,21 @@ git clone https://github.com/AynurAkhmadullin/semantic-study-search.git
 cd semantic-study-search
 ```
 
+### Запуск в Google Colab
+
+Откройте [готовый блокнот](notebooks/semantic-study-search-colab.ipynb) через меню
+Colab **Файл → Загрузить блокнот**. После отправки файла в GitHub доступно
+[открытие из репозитория](https://colab.research.google.com/github/AynurAkhmadullin/semantic-study-search/blob/main/notebooks/semantic-study-search-colab.ipynb).
+
+Выполните шаги 1–4: установка, подключение Google Drive, восстановление библиотеки
+и запуск интерфейса. Блокнот включает исправление XSRF-cookie для загрузки файлов
+через iframe Colab и проверку его применения.
+
+После работы включите `SAVE_AND_STOP` в шаге 5 и выполните ячейку: приложение
+остановится, библиотека сохранится архивом в **Мой диск → semantic-study-search**.
+В новом сеансе восстановится последний завершённый архив. Сохранение ручное:
+при внезапном отключении среды изменения после последнего архива будут потеряны.
+
 ### Запуск через Docker
 
 Один `Dockerfile` собирает образ с API и интерфейсом. Команды выполняются из корня
@@ -160,10 +175,12 @@ API описан в [Swagger](http://127.0.0.1:8000/docs):
 
 ```text
 semantic-study-search/
-├── .github/workflows/ci.yml   # Проверки при push и pull request
-├── .streamlit/config.toml    # Настройки интерфейса
+├── .github/workflows/ci.yml # Проверки при push и pull request
+├── .streamlit/config.toml   # Настройки интерфейса
 ├── Dockerfile               # Образ API и UI в одном контейнере
 ├── .dockerignore            # Исключения из контекста сборки
+├── notebooks/
+│   └── semantic-study-search-colab.ipynb  # Colab и архивы библиотеки в Drive
 ├── scripts/
 │   └── evaluate.py          # Оценка поиска на своём контрольном наборе
 ├── src/semantic_study_search/
