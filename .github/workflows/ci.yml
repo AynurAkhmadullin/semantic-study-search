@@ -36,6 +36,35 @@ jobs:
       - name: Build distributions
         run: uv build
 
+  container:
+    name: Docker image
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build runtime image
+        run: docker build --platform linux/amd64 --tag semantic-study-search:ci .
+      - name: Check installed application and writable storage
+        run: |
+          docker run --rm --entrypoint python semantic-study-search:ci -c '
+          import os
+          from pathlib import Path
+          import fastapi, streamlit, torch, sentence_transformers
+          from semantic_study_search import launcher
+          from semantic_study_search.api.settings import APISettings
+          settings = APISettings.from_env()
+          assert os.getuid() == 10001
+          assert torch.version.cuda is None
+          for directory in (Path("/data"), Path(os.environ["HF_HOME"]), settings.index_dir, settings.model_cache):
+              probe = directory / ".write-check"
+              probe.write_text("ok")
+              probe.unlink()
+          assert not (settings.index_dir / "CURRENT").exists()
+          assert Path("/app/.streamlit/config.toml").is_file()
+          print("Runtime imports and storage permissions are valid.")
+          '
+
   model:
     name: Pretrained E5 integration
     needs: checks

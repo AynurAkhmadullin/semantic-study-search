@@ -6,11 +6,11 @@
 
 ## Требования
 
-- Git и [uv](https://docs.astral.sh/uv/getting-started/installation/) версии `0.11.29` или новее.
-- Python **3.13**; uv устанавливает его по файлу `.python-version`.
-- Windows x86-64 или Linux x86-64; модель работает на CPU.
+- Для запуска через Docker — Docker Desktop с Linux-контейнерами или Docker Engine на Linux.
+- Для запуска без Docker — [uv](https://docs.astral.sh/uv/getting-started/installation/) версии `0.11.29` или новее и Python **3.13**.
+- Windows x86-64 или Linux x86-64.
 - Доступ к GitHub, PyPI и `download.pytorch.org` для установки зависимостей.
-- Доступ к Hugging Face при первом скачивании модели; веса занимают около 471 МБ.
+- Доступ к Hugging Face при первом скачивании модели (около 471 МБ).
 - Постоянный диск для библиотеки и оригиналов, в том числе при размещении в облаке.
 
 Поддерживаются TXT и Markdown в UTF-8, PDF с текстовым слоем: один файл до **20 МБ**,
@@ -21,6 +21,54 @@
 ```shell
 git clone https://github.com/AynurAkhmadullin/semantic-study-search.git
 cd semantic-study-search
+```
+
+### Запуск через Docker
+
+Один `Dockerfile` собирает образ с API и интерфейсом. Команды выполняются из корня
+репозитория при работающем Docker Engine; Docker Compose не требуется.
+Для первой сборки нужен доступ к Docker Hub, `ghcr.io` и источникам Python-зависимостей.
+
+Сборка образа:
+
+```shell
+docker build --platform linux/amd64 -t semantic-study-search:local .
+```
+
+Запуск приложения в фоне:
+
+```shell
+docker run -d --name semantic-study-search --stop-timeout 45 -p 127.0.0.1:8501:8501 -p 127.0.0.1:8000:8000 --mount type=volume,source=semantic-study-data,target=/data semantic-study-search:local
+```
+
+Интерфейс доступен на [порту 8501](http://127.0.0.1:8501), документация API — на
+[порту 8000](http://127.0.0.1:8000/docs). Первая загрузка модели может занять несколько
+минут; интерфейс запускается после готовности API. Ход запуска можно увидеть командой:
+
+```shell
+docker logs -f semantic-study-search
+```
+
+`Ctrl+C` завершает просмотр логов. Для остановки и повторного запуска приложения:
+
+```shell
+docker stop semantic-study-search
+docker start semantic-study-search
+```
+
+Том `semantic-study-data` хранит оригиналы и индекс в `/data/library`, а модель —
+в `/data/huggingface/hub`. Он сохраняет данные после остановки или удаления контейнера;
+при создании нового контейнера используйте то же имя тома. Новая библиотека в Docker
+пуста: локальные материалы из рабочей папки не входят в образ.
+После скачивания модели можно добавить `-e SSS_OFFLINE=1` перед именем образа в `docker run`.
+
+Контейнер проверяет готовность API и UI; состояние видно в `docker ps`.
+Внутренние порты — 8000 и 8501. Для других внешних портов меняйте левую часть
+соответствия в `-p`, например `127.0.0.1:8502:8501` для интерфейса.
+
+### Запуск без Docker
+
+```shell
 uv sync --locked --all-extras
 ```
 
@@ -114,6 +162,8 @@ API описан в [Swagger](http://127.0.0.1:8000/docs):
 semantic-study-search/
 ├── .github/workflows/ci.yml   # Проверки при push и pull request
 ├── .streamlit/config.toml    # Настройки интерфейса
+├── Dockerfile               # Образ API и UI в одном контейнере
+├── .dockerignore            # Исключения из контекста сборки
 ├── scripts/
 │   └── evaluate.py          # Оценка поиска на своём контрольном наборе
 ├── src/semantic_study_search/

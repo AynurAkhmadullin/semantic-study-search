@@ -1,4 +1,4 @@
-"""Совместный локальный запуск API и Streamlit из одного терминала."""
+"""Совместный запуск API и Streamlit локально или в контейнере."""
 
 import argparse
 import os
@@ -14,12 +14,13 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, build_opener
 
 
-def check_ports(api_port: int, ui_port: int) -> None:
-    """Проверяет доступность двух локальных портов до запуска процессов.
+def check_ports(api_port: int, ui_port: int, *, host: str = "127.0.0.1") -> None:
+    """Проверяет доступность двух портов до запуска процессов.
 
     Args:
         api_port: Порт поискового API.
         ui_port: Порт веб-интерфейса.
+        host: Адрес прослушивания сервисов.
     """
     if api_port == ui_port:
         raise ValueError("API и интерфейсу нужны разные порты.")
@@ -31,7 +32,7 @@ def check_ports(api_port: int, ui_port: int) -> None:
             if os.name == "nt":
                 server.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             try:
-                server.bind(("127.0.0.1", port))
+                server.bind((host, port))
             except OSError as error:
                 raise ValueError(
                     f"Порт {port} недоступен. Остановите прежний процесс "
@@ -137,8 +138,18 @@ def stop_processes(processes: list[subprocess.Popen]) -> None:
             process.wait(timeout=10)
 
 
+def request_shutdown(signum: int, frame: object) -> None:
+    """Передаёт сигнал остановки в общий обработчик завершения сервисов.
+
+    Args:
+        signum: Номер полученного сигнала.
+        frame: Контекст выполнения в момент сигнала.
+    """
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Запускает локальное приложение и завершает оба сервиса по Ctrl+C.
+    """Запускает приложение и завершает оба сервиса по Ctrl+C или SIGTERM.
 
     Args:
         argv: Аргументы команды; None использует командную строку.
@@ -151,16 +162,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--api-port", type=int, default=8000, help="Порт API, по умолчанию 8000")
     parser.add_argument("--ui-port", type=int, default=8501, help="Порт UI, по умолчанию 8501")
+    parser.add_argument(
+        "--host",
+        choices=["127.0.0.1", "0.0.0.0"],
+        default="127.0.0.1",
+        help="Адрес сервисов; 0.0.0.0 открывает доступ через сеть контейнера",
+    )
     parser.add_argument("--offline", action="store_true", help="Использовать скачанные веса модели")
     args = parser.parse_args(argv)
     processes = []
+    previous_handlers = {}
     try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[signum] = signal.signal(signum, request_shutdown)
         if any(
             find_spec(module) is None
             for module in ("uvicorn", "streamlit", "sentence_transformers")
         ):
             raise RuntimeError("Установите зависимости: uv sync --locked --all-extras")
-        check_ports(args.api_port, args.ui_port)
+        check_ports(args.api_port, args.ui_port, host=args.host)
         environment = prepare_environment(Path.cwd(), offline=args.offline)
         api_url = f"http://127.0.0.1:{args.api_port}"
         ui_url = f"http://127.0.0.1:{args.ui_port}"
@@ -173,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
                 "uvicorn",
                 "semantic_study_search.api.app:app",
                 "--host",
-                "127.0.0.1",
+                args.host,
                 "--port",
                 str(args.api_port),
             ],
@@ -189,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
                 "run",
                 str(Path(__file__).parent / "ui/app.py"),
                 "--server.address",
-                "127.0.0.1",
+                args.host,
                 "--server.port",
                 str(args.ui_port),
                 "--server.headless",
@@ -214,13 +234,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Ошибка: {error}", file=sys.stderr, flush=True)
         return 1
     finally:
-        if processes:
-            # Повторное нажатие не должно прерывать освобождение дочерних процессов.
-            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
-            try:
+        try:
+            # Повторный сигнал не должен прерывать остановку дочерних процессов.
+            for signum in previous_handlers:
+                signal.signal(signum, signal.SIG_IGN)
+            if processes:
                 stop_processes(processes)
-            finally:
-                signal.signal(signal.SIGINT, previous)
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
 
 
 if __name__ == "__main__":

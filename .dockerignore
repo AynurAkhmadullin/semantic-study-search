@@ -1,0 +1,14 @@
+# Send only the application sources and locked build inputs.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!.streamlit/
+!.streamlit/config.toml
+
+**/__pycache__/
+**/*.py[cod]

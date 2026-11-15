@@ -1,6 +1,7 @@
 """Проверки настройки и совместного жизненного цикла локальных сервисов."""
 
 import os
+import signal
 import socket
 import subprocess
 from unittest.mock import Mock
@@ -115,7 +116,55 @@ def test_launch_waits_for_both_services_and_ctrl_c_stops_them(runtime):
     ui_environment = start.call_args_list[1].args[1]
     assert api_environment["SSS_INDEX_DIR"] == ui_environment["SSS_INDEX_DIR"] == "custom/library"
     assert ui_environment["SSS_API_URL"] == "http://127.0.0.1:8123"
+    assert start.call_args_list[0].args[0][3] == "127.0.0.1"
+    assert start.call_args_list[1].args[0][4] == "127.0.0.1"
     stop.assert_called_once_with([api, ui])
+
+
+def test_container_host_keeps_internal_health_and_api_urls(runtime):
+    """Контейнер открывает порты наружу и связывает сервисы через loopback.
+
+    Args:
+        runtime: Подменённые процессы и ожидание.
+    """
+    api, ui, start, ready, _ = runtime
+    assert launcher.main(["--host", "0.0.0.0"]) == 0
+    launcher.check_ports.assert_called_once_with(8000, 8501, host="0.0.0.0")
+    assert start.call_args_list[0].args[0][3] == "0.0.0.0"
+    assert start.call_args_list[1].args[0][4] == "0.0.0.0"
+    assert start.call_args_list[1].args[1]["SSS_API_URL"] == "http://127.0.0.1:8000"
+    assert ready.call_args_list[0].args == (api, "http://127.0.0.1:8000/health")
+    assert ready.call_args_list[1].args == (ui, "http://127.0.0.1:8501/_stcore/health")
+
+
+@pytest.mark.parametrize("during_startup", [False, True])
+def test_sigterm_stops_children_and_restores_handlers(runtime, monkeypatch, during_startup):
+    """SIGTERM останавливает созданные процессы даже во время загрузки модели.
+
+    Args:
+        runtime: Подменённые процессы и ожидание.
+        monkeypatch: Подмена этапа получения сигнала.
+        during_startup: Получить сигнал до запуска интерфейса.
+    """
+    api, ui, _, ready, stop = runtime
+    handlers = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+
+    def terminate(*args):
+        """Вызывает зарегистрированный обработчик остановки.
+
+        Args:
+            *args: Аргументы подменённой операции.
+        """
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+    if during_startup:
+        ready.side_effect = terminate
+    else:
+        monkeypatch.setattr(launcher.time, "sleep", terminate)
+    assert launcher.main(["--host", "0.0.0.0"]) == 0
+    stop.assert_called_once_with([api] if during_startup else [api, ui])
+    for signum, handler in handlers.items():
+        assert signal.getsignal(signum) == handler
 
 
 def test_api_failure_prevents_ui_launch_and_cleans_up(runtime):
